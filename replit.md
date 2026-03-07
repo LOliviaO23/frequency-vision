@@ -1,0 +1,118 @@
+# FrequencyVision - Digital Movie Kit Marketplace
+
+## Overview
+A web application for selling digital movie kits that combine theta binaural beats, Solfeggio healing frequencies, stunning visuals, and affirmations users record in their own voice. The binaural beats (6 Hz theta) guide the brain into theta state (4-8 Hz) where the subconscious directly absorbs spoken and visual affirmations without resistance. Users can also upload their favorite songs to play in the background during their vision movie.
+
+## Tech Stack
+- **Frontend:** React + TypeScript + Vite + TailwindCSS + shadcn/ui
+- **Backend:** Express.js + TypeScript
+- **Database:** PostgreSQL with Drizzle ORM
+- **Payments:** Stripe (via Replit integration)
+- **AI:** OpenAI (via Replit AI Integration) for help bot
+- **Routing:** wouter
+- **State:** TanStack React Query
+- **Audio:** Web Audio API (binaural beats), MediaRecorder API (voice recording), HTMLAudioElement (song playback)
+
+## Project Structure
+```
+client/src/
+  pages/         - Home, Kits, KitDetail, Player, HowItWorks, CheckoutSuccess, VisionBoard
+  components/    - Header, Footer, KitCard, HelpBot, ThemeProvider, ThemeToggle
+  hooks/         - useFrequency (stereo binaural beats), useVoiceRecorder (MediaRecorder)
+  lib/           - queryClient
+
+server/
+  index.ts       - Express app, Stripe init, DB push, seeding, helpbot registration
+  routes.ts      - API endpoints (/api/kits, /api/checkout, /api/visuals, etc.)
+  helpbot.ts     - AI help bot endpoint using OpenAI streaming
+  storage.ts     - Database CRUD operations
+  db.ts          - Drizzle database connection
+  seed.ts        - Seed data for 16 kits with 640 affirmations, 80 visuals, 800 vision board images
+  seed-vision-board.ts - Vision board seed data (50 Unsplash images per kit)
+  stripeClient.ts - Stripe client & sync setup
+  webhookHandlers.ts - Stripe webhook processing
+
+shared/
+  schema.ts      - Drizzle schema (kits, affirmations, kit_visuals, vision_board_images, orders, conversations, messages)
+  models/chat.ts - Conversations & messages tables for chat
+```
+
+## Key Features
+1. **Kit Catalog** - 16 kits across 8 categories: abundance, health, love, confidence, peace, success, freedom (addiction recovery), manifestation (dream car/home)
+2. **Kit Detail** - Frequency info, affirmation list, pricing, purchase
+3. **Build Your Kit** - Users select from 40 affirmations and 10 visuals per category to customize their vision movie
+4. **Interactive Player** - 6-phase flow: Build (select) -> Record (voice with inline mic buttons) -> Complete My Movie (assembly) -> Preparation (vagus nerve, breathing, Silva relaxation, trance induction) -> Playback (vision movie) -> Session Complete (daily usage guidance)
+5. **Voice Auto-Tuning** - Recordings automatically processed to hypnotic trance pitch (pitch shift, warmth, reverb, compression) via Web Audio API OfflineAudioContext
+6. **Song Upload** - Users upload their favorite song to play in background during vision movie; song ducks when affirmations play
+7. **Visual Cycling** - During playback, selected visuals cycle as backgrounds with smooth crossfade transitions
+7. **Vision Board** - 50 aspirational stock images per kit with lightbox viewing
+8. **AI Help Bot** - Floating chat widget powered by OpenAI streaming for customer support
+9. **Stripe Checkout** - Payment processing for kit purchases
+10. **Dark/Light Mode** - Theme toggle with localStorage persistence
+
+## Player 6-Phase Flow
+1. **BUILD** - Browse 40 affirmations and 10 category visuals; select at least 5 affirmations and 3 visuals; upload favorite song
+2. **RECORD** - Record selected affirmations in your own voice; inline mic button next to each affirmation; "Complete My Movie" button appears when all recorded
+3. **ASSEMBLING** - Cinematic assembly screen with animated progress through 7 steps (visuals, voices, frequency, beats, song mixing, finalizing); auto-transitions to preparation
+4. **PREPARATION** - Guided 4-step trance induction:
+   - Step 0: Vagus Nerve Reset (diaphragmatic breathing, extended exhale, humming)
+   - Step 1: 7-4-7 Breathing (animated circle, 3 cycles: inhale 7s, hold 4s, exhale 7s)
+   - Step 2: Silva Deep Relaxation (progressive body scan, theta beats start)
+   - Step 3: Visualization Trance Induction (staircase countdown 10→1, guided imagery)
+   - "Skip to Movie" button available throughout
+5. **PLAYBACK** - Vision movie plays with:
+   - Cycling selected visuals as backgrounds (20s intervals, crossfade)
+   - Recorded affirmations playing intermittently with on-screen captions
+   - Uploaded song in background (ducks during affirmation playback)
+   - Theta binaural beats subliminal underneath
+5. **SESSION COMPLETE** - Post-playback screen with daily usage guidance (morning after waking, night before sleep, consistency message); "Play Again" button triggers re-assembly; browse more kits option
+
+## Audio Architecture (Player)
+Three simultaneous audio layers during playback:
+- **Layer 1: Uploaded Song** - User's favorite music, loops continuously, volume ducks to 40% during voice affirmation playback
+- **Layer 2: Voice Recordings** - User's recorded affirmations (auto-tuned to hypnotic pitch), play intermittently (one per time slot)
+- **Layer 3: Theta Binaural Beats** - Left ear: carrier frequency, Right ear: carrier + 6 Hz; subliminal but effective for subconscious access
+
+## Voice Auto-Tuning (use-voice-processor.ts)
+Recordings are processed via Web Audio API OfflineAudioContext:
+- **Pitch Shift** - Playback rate lowered to 0.88x for deeper, trance-inducing voice
+- **Warmth** - Low-shelf filter at 300 Hz (+4 dB) adds bass warmth
+- **Clarity** - High-shelf filter at 3000 Hz (-2 dB) smooths harsh frequencies
+- **Reverb** - Convolution reverb (1.5s decay, 15% wet mix) adds hypnotic quality
+- **Compression** - Dynamic compressor (threshold -24 dB, ratio 4:1) for smooth delivery
+- Output encoded as WAV blob; both original and processed versions stored per affirmation
+
+## API Routes
+- GET /api/kits - List all kits
+- GET /api/kits/:id - Get single kit
+- GET /api/kits/:id/affirmations - Get affirmations for a kit (40 per kit)
+- GET /api/kits/:id/vision-board - Get vision board images for a kit (50 per kit)
+- GET /api/visuals/:category - Get visual images for a category (10 per category)
+- POST /api/checkout - Create Stripe checkout session
+- POST /api/helpbot - AI chat endpoint (SSE streaming)
+- GET /api/orders/verify - Verify order status
+- GET /api/stripe/publishable-key - Get Stripe publishable key
+
+## Database
+- Uses PostgreSQL via Drizzle ORM
+- Schema pushed via `drizzle-kit push` on startup
+- Seeded with 16 kits, 640 affirmations, 80 visuals, 800 vision board images
+- Tables: kits, affirmations, kit_visuals, vision_board_images, orders, conversations, messages
+- Categories: abundance, health, love, confidence, peace, success, freedom, manifestation
+
+## AI Help Bot
+- Uses OpenAI via Replit AI Integration (env vars: AI_INTEGRATIONS_OPENAI_BASE_URL, AI_INTEGRATIONS_OPENAI_API_KEY)
+- Model: gpt-5-nano for fast responses
+- SSE streaming for real-time chat responses
+- System prompt with full product knowledge (kits, frequencies, how-it-works)
+- Floating chat widget in bottom-right corner of all pages
+
+## Design
+- Dark theme by default with cosmic/spiritual aesthetic
+- Purple primary color (270 80% 55%)
+- Outfit sans-serif, Playfair Display serif fonts
+- Bright white text in dark mode (foreground 0 0% 98%, muted-foreground 260 5% 75%)
+- Generated images for each kit category
+- 80 stock photos for visual backgrounds organized by category
+- 800 Unsplash CDN images for vision boards (50 per kit)
+- Customer testimonials on home page (10 diverse reviews with names, ages, locations)
