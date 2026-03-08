@@ -469,17 +469,29 @@ export default function Player() {
   }, [selectedAffirmations, kit, uploadedSong, mode, clearAssemblyTimers]);
 
   const duckSong = useCallback((duck: boolean) => {
-    if (!songGainNodeRef.current || !audioCtxRef.current) return;
-    const ctx = audioCtxRef.current;
-    const gain = songGainNodeRef.current;
-    const target = duck ? songVolume * 0.4 : songVolume;
-    gain.gain.cancelScheduledValues(ctx.currentTime);
-    gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(
-      songMuted ? 0 : target,
-      ctx.currentTime + 0.3,
-    );
-  }, [songVolume, songMuted]);
+    const DUCK_DB = 3.5;
+    const DUCK_RATIO = Math.pow(10, -DUCK_DB / 20);
+    const DUCK_RAMP_S = 0.3;
+
+    if (songGainNodeRef.current && audioCtxRef.current) {
+      const ctx = audioCtxRef.current;
+      const gain = songGainNodeRef.current;
+      const target = duck ? songVolume * DUCK_RATIO : songVolume;
+      const safeTarget = songMuted ? 0.0001 : Math.max(0.0001, target);
+      gain.gain.cancelScheduledValues(ctx.currentTime);
+      gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(
+        safeTarget,
+        ctx.currentTime + DUCK_RAMP_S,
+      );
+    }
+
+    if (duck) {
+      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume * DUCK_RATIO);
+    } else {
+      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
+    }
+  }, [songVolume, songMuted, frequency, frequencyVolume, frequencyMuted]);
 
   const clearFadeIntervals = useCallback(() => {
     fadeIntervalsRef.current.forEach(clearInterval);
@@ -531,7 +543,9 @@ export default function Player() {
         }
       }, stepTime);
       fadeIntervalsRef.current.push(fadeIn);
-    }).catch(() => {});
+    }).catch(() => {
+      duckSong(false);
+    });
   }, [duckSong]);
 
   const startPlayback = useCallback(() => {
@@ -910,11 +924,11 @@ export default function Player() {
       const ctx = audioCtxRef.current;
       songGainNodeRef.current.gain.cancelScheduledValues(ctx.currentTime);
       songGainNodeRef.current.gain.setValueAtTime(
-        songGainNodeRef.current.gain.value,
+        Math.max(0.0001, songGainNodeRef.current.gain.value),
         ctx.currentTime,
       );
-      songGainNodeRef.current.gain.linearRampToValueAtTime(
-        songMuted ? 0 : songVolume,
+      songGainNodeRef.current.gain.exponentialRampToValueAtTime(
+        songMuted ? 0.0001 : Math.max(0.0001, songVolume),
         ctx.currentTime + 0.1,
       );
     } else if (songAudioRef.current) {

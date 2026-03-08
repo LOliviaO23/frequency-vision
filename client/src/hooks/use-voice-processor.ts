@@ -1,23 +1,69 @@
 import { useCallback, useRef } from "react";
 
 const PITCH_SHIFT_FACTOR = 0.88;
-const REVERB_DECAY = 1.5;
-const REVERB_MIX = 0.15;
-const WARMTH_GAIN = 1.15;
-const LOW_SHELF_FREQ = 300;
-const LOW_SHELF_GAIN = 4;
-const HIGH_SHELF_FREQ = 3000;
-const HIGH_SHELF_GAIN = -2;
 
-function createReverbImpulse(ctx: OfflineAudioContext, duration: number, decay: number): AudioBuffer {
+const WARMTH_FREQ = 150;
+const WARMTH_GAIN_DB = 4;
+
+const CLARITY_FREQ = 3000;
+const CLARITY_GAIN_DB = -2;
+const CLARITY_Q = 1.4;
+
+const HALL_REVERB_DECAY = 2.5;
+const HALL_REVERB_MIX = 0.10;
+const HALL_PRE_DELAY_MS = 20;
+const HALL_EARLY_REFLECTIONS = [
+  { delay: 0.012, gain: 0.7 },
+  { delay: 0.019, gain: 0.6 },
+  { delay: 0.028, gain: 0.5 },
+  { delay: 0.037, gain: 0.45 },
+  { delay: 0.048, gain: 0.35 },
+  { delay: 0.063, gain: 0.3 },
+];
+
+const COMP_THRESHOLD = -24;
+const COMP_RATIO = 4;
+const COMP_KNEE = 12;
+const COMP_ATTACK = 0.003;
+const COMP_RELEASE = 0.15;
+
+function createLargeHallImpulse(ctx: OfflineAudioContext, duration: number, decay: number): AudioBuffer {
   const sampleRate = ctx.sampleRate;
-  const length = sampleRate * duration;
+  const length = Math.ceil(sampleRate * duration);
   const impulse = ctx.createBuffer(2, length, sampleRate);
+  const preDelaySamples = Math.floor((HALL_PRE_DELAY_MS / 1000) * sampleRate);
 
   for (let channel = 0; channel < 2; channel++) {
     const channelData = impulse.getChannelData(channel);
-    for (let i = 0; i < length; i++) {
-      channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+
+    for (const ref of HALL_EARLY_REFLECTIONS) {
+      const refSample = Math.floor(ref.delay * sampleRate) + preDelaySamples;
+      if (refSample < length) {
+        const stereoOffset = channel === 0 ? 0 : Math.floor(0.003 * sampleRate);
+        const idx = Math.min(refSample + stereoOffset, length - 1);
+        channelData[idx] += ref.gain * (0.8 + Math.random() * 0.4);
+      }
+    }
+
+    const diffusionStart = Math.floor(0.08 * sampleRate) + preDelaySamples;
+    for (let i = diffusionStart; i < length; i++) {
+      const t = i / length;
+      const envelope = Math.pow(1 - t, decay) * Math.exp(-3 * t);
+      const noise = Math.random() * 2 - 1;
+      const modulation = 1 + 0.02 * Math.sin(2 * Math.PI * 0.5 * (i / sampleRate));
+      channelData[i] += noise * envelope * modulation * 0.5;
+    }
+
+    if (channel === 1) {
+      const decorrelationSamples = Math.floor(0.007 * sampleRate);
+      const temp = new Float32Array(length);
+      for (let i = 0; i < length; i++) {
+        const srcIdx = i - decorrelationSamples;
+        temp[i] = srcIdx >= 0 ? channelData[srcIdx] : 0;
+      }
+      for (let i = 0; i < length; i++) {
+        channelData[i] = temp[i];
+      }
     }
   }
 
@@ -41,11 +87,11 @@ export function useVoiceProcessor() {
 
       const originalDuration = audioBuffer.duration;
       const originalSampleRate = audioBuffer.sampleRate;
-      const outputDuration = originalDuration / PITCH_SHIFT_FACTOR + REVERB_DECAY;
+      const outputDuration = originalDuration / PITCH_SHIFT_FACTOR + HALL_REVERB_DECAY;
       const outputLength = Math.ceil(outputDuration * originalSampleRate);
 
       const offlineCtx = new OfflineAudioContext(
-        audioBuffer.numberOfChannels,
+        2,
         outputLength,
         originalSampleRate
       );
@@ -54,46 +100,63 @@ export function useVoiceProcessor() {
       source.buffer = audioBuffer;
       source.playbackRate.value = PITCH_SHIFT_FACTOR;
 
-      const warmthGain = offlineCtx.createGain();
-      warmthGain.gain.value = WARMTH_GAIN;
+      const subRumbleFilter = offlineCtx.createBiquadFilter();
+      subRumbleFilter.type = "highpass";
+      subRumbleFilter.frequency.value = 60;
+      subRumbleFilter.Q.value = 0.7;
 
-      const lowShelf = offlineCtx.createBiquadFilter();
-      lowShelf.type = "lowshelf";
-      lowShelf.frequency.value = LOW_SHELF_FREQ;
-      lowShelf.gain.value = LOW_SHELF_GAIN;
+      const warmthFilter = offlineCtx.createBiquadFilter();
+      warmthFilter.type = "lowshelf";
+      warmthFilter.frequency.value = WARMTH_FREQ;
+      warmthFilter.gain.value = WARMTH_GAIN_DB;
 
-      const highShelf = offlineCtx.createBiquadFilter();
-      highShelf.type = "highshelf";
-      highShelf.frequency.value = HIGH_SHELF_FREQ;
-      highShelf.gain.value = HIGH_SHELF_GAIN;
+      const clarityFilter = offlineCtx.createBiquadFilter();
+      clarityFilter.type = "peaking";
+      clarityFilter.frequency.value = CLARITY_FREQ;
+      clarityFilter.gain.value = CLARITY_GAIN_DB;
+      clarityFilter.Q.value = CLARITY_Q;
 
       const dryGain = offlineCtx.createGain();
-      dryGain.gain.value = 1 - REVERB_MIX;
+      dryGain.gain.value = 1 - HALL_REVERB_MIX;
 
       const wetGain = offlineCtx.createGain();
-      wetGain.gain.value = REVERB_MIX;
+      wetGain.gain.value = HALL_REVERB_MIX;
 
       const convolver = offlineCtx.createConvolver();
-      convolver.buffer = createReverbImpulse(offlineCtx, REVERB_DECAY, 3);
+      convolver.buffer = createLargeHallImpulse(offlineCtx, HALL_REVERB_DECAY, 2.8);
+
+      const reverbDamping = offlineCtx.createBiquadFilter();
+      reverbDamping.type = "lowpass";
+      reverbDamping.frequency.value = 8000;
+      reverbDamping.Q.value = 0.5;
 
       const compressor = offlineCtx.createDynamicsCompressor();
-      compressor.threshold.value = -24;
-      compressor.knee.value = 12;
-      compressor.ratio.value = 4;
-      compressor.attack.value = 0.003;
-      compressor.release.value = 0.15;
+      compressor.threshold.value = COMP_THRESHOLD;
+      compressor.knee.value = COMP_KNEE;
+      compressor.ratio.value = COMP_RATIO;
+      compressor.attack.value = COMP_ATTACK;
+      compressor.release.value = COMP_RELEASE;
 
-      source.connect(warmthGain);
-      warmthGain.connect(lowShelf);
-      lowShelf.connect(highShelf);
+      const outputLimiter = offlineCtx.createDynamicsCompressor();
+      outputLimiter.threshold.value = -1;
+      outputLimiter.knee.value = 0;
+      outputLimiter.ratio.value = 20;
+      outputLimiter.attack.value = 0.001;
+      outputLimiter.release.value = 0.05;
 
-      highShelf.connect(dryGain);
-      highShelf.connect(convolver);
-      convolver.connect(wetGain);
+      source.connect(subRumbleFilter);
+      subRumbleFilter.connect(warmthFilter);
+      warmthFilter.connect(clarityFilter);
+
+      clarityFilter.connect(dryGain);
+      clarityFilter.connect(convolver);
+      convolver.connect(reverbDamping);
+      reverbDamping.connect(wetGain);
 
       dryGain.connect(compressor);
       wetGain.connect(compressor);
-      compressor.connect(offlineCtx.destination);
+      compressor.connect(outputLimiter);
+      outputLimiter.connect(offlineCtx.destination);
 
       source.start(0);
 

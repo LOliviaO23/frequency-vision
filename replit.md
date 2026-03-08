@@ -68,19 +68,34 @@ shared/
 6. **SESSION COMPLETE** - Post-playback with daily usage guidance; Stripe "Save & Unlock" premium CTA with animated gradient border before replay access; "Continue without saving" bypass link; browse more kits option
 
 ## Audio Architecture (Player)
-Three simultaneous audio layers during playback:
-- **Layer 1: Uploaded Song** - User's favorite music, loops continuously, volume ducks to 40% during voice affirmation playback
-- **Layer 2: Voice Recordings** - User's recorded affirmations (auto-tuned to hypnotic pitch), play intermittently (one per time slot)
-- **Layer 3: Theta Binaural Beats** - Left ear: carrier frequency, Right ear: carrier + 6 Hz; subliminal but effective for subconscious access
+Three simultaneous audio layers during playback with sidechain ducking:
+- **Layer 1: Uploaded Song** - User's favorite music, loops continuously; sidechain-ducked by 3.5 dB when voice plays (smooth 0.3s ramp via GainNode)
+- **Layer 2: Voice Recordings** - User's recorded affirmations with 'God Voice' processing, play intermittently with 300ms crossfade
+- **Layer 3: Theta Binaural Beats** - Left ear: carrier frequency, Right ear: carrier + 6 Hz; subtle LFO pulsing (0.15 Hz, 25% depth) for organic breathing feel; also ducked 3.5 dB during voice playback
+- **Layer 4: Solfeggio Tone** - Pure sine wave at kit's Solfeggio frequency, steady 0.05 amplitude (no pulsing), consistent healing presence underneath
+- **Sidechain Ducking** - Exponential ramps (not linear) for perceptually natural volume transitions; both song and binaural beats duck 3.5 dB (DUCK_RATIO = 10^(-3.5/20) ≈ 0.668) when voice speaks, restoring on voice end
 
-## Voice Auto-Tuning (use-voice-processor.ts)
-Recordings are processed via Web Audio API OfflineAudioContext:
-- **Pitch Shift** - Playback rate lowered to 0.88x for deeper, trance-inducing voice
-- **Warmth** - Low-shelf filter at 300 Hz (+4 dB) adds bass warmth
-- **Clarity** - High-shelf filter at 3000 Hz (-2 dB) smooths harsh frequencies
-- **Reverb** - Convolution reverb (1.5s decay, 15% wet mix) adds hypnotic quality
-- **Compression** - Dynamic compressor (threshold -24 dB, ratio 4:1) for smooth delivery
-- Output encoded as WAV blob; both original and processed versions stored per affirmation
+## Voice Auto-Tuning / 'God Voice' DSP (use-voice-processor.ts)
+Three professional DSP layers processed via Web Audio API OfflineAudioContext:
+
+### Layer 1: Voice EQ
+- **Pitch Shift** - Playback rate 0.88x for deeper, authoritative voice
+- **Sub Rumble Filter** - Highpass at 60 Hz removes mic rumble before processing
+- **Warmth Filter** - Low-shelf at 150 Hz, +4 dB adds warmth and authority
+- **Clarity Filter** - Peaking filter at 3 kHz, -2 dB, Q=1.4 softens sibilance for hypnotic quality
+
+### Layer 2: Large Hall Spatial Reverb
+- **Pre-Delay** - 20ms gap before reverb onset for source clarity
+- **Early Reflections** - 6 discrete reflections (12-63ms) with stereo offset for spatial width
+- **Late Diffusion** - Exponential + linear decay (2.5s), modulated noise for organic hall character
+- **Stereo Decorrelation** - 7ms delay offset on right channel for immersive spatial spread
+- **Damping** - Lowpass at 8 kHz on wet signal simulates air absorption in large spaces
+- **Wet Mix** - 10% blend for dream-state presence without washing out clarity
+
+### Layer 3: Output Chain
+- **Compressor** - Threshold -24 dB, ratio 4:1, 3ms attack, 150ms release for perfectly smooth dynamics
+- **Output Limiter** - Brick-wall at -1 dB (ratio 20:1) prevents clipping
+- Output encoded as stereo WAV blob; both original and processed versions stored per affirmation
 
 ## API Routes
 - GET /api/kits - List all kits
