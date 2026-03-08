@@ -53,7 +53,7 @@ shared/
 ## Player 6-Phase Flow
 1. **BUILD** - Browse 40 affirmations and 10 category visuals; select at least 5 affirmations and 3 visuals; upload favorite song
 2. **RECORD** - Record selected affirmations in your own voice; inline mic button next to each affirmation; "Complete My Movie" button appears when all recorded
-3. **ASSEMBLING** - Cinematic assembly screen with animated progress through 7 steps (visuals, voices, frequency, beats, song mixing, finalizing); auto-transitions to preparation
+3. **ASSEMBLING** - Cinematic assembly screen with animated rotating gradient border (premium-border CSS), animated progress through 7 steps; auto-transitions to preparation
 4. **PREPARATION** - Guided 4-step trance induction:
    - Step 0: Vagus Nerve Reset (diaphragmatic breathing, extended exhale, humming)
    - Step 1: 7-4-7 Breathing (animated circle, 3 cycles: inhale 7s, hold 4s, exhale 7s)
@@ -62,10 +62,10 @@ shared/
    - "Skip to Movie" button available throughout
 5. **PLAYBACK** - Vision movie plays with:
    - Cycling selected visuals as backgrounds (20s intervals, crossfade)
-   - Recorded affirmations playing intermittently with on-screen captions
-   - Uploaded song in background (ducks during affirmation playback)
+   - Recorded affirmations crossfade between each other (300ms fade-in/out, no pops)
+   - Uploaded song routed through Web Audio API GainNode for smooth ducking (0.3s ramp)
    - Theta binaural beats subliminal underneath
-5. **SESSION COMPLETE** - Post-playback screen with daily usage guidance (morning after waking, night before sleep, consistency message); "Play Again" button triggers re-assembly; browse more kits option
+6. **SESSION COMPLETE** - Post-playback with daily usage guidance; Stripe "Save & Unlock" premium CTA with animated gradient border before replay access; "Continue without saving" bypass link; browse more kits option
 
 ## Audio Architecture (Player)
 Three simultaneous audio layers during playback:

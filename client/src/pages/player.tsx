@@ -37,14 +37,27 @@ import {
   Heart,
   ChevronRight,
   SkipForward,
+  Lock,
+  Crown,
+  Save,
+  CreditCard,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useFrequency } from "@/hooks/use-frequency";
-import { useVoiceRecorder, type RecordingData } from "@/hooks/use-voice-recorder";
+import {
+  useVoiceRecorder,
+  type RecordingData,
+} from "@/hooks/use-voice-recorder";
 import { useVoiceProcessor } from "@/hooks/use-voice-processor";
 import { useToast } from "@/hooks/use-toast";
 
-type PlayerMode = "build" | "record" | "assembling" | "preparation" | "playback" | "complete";
+type PlayerMode =
+  | "build"
+  | "record"
+  | "assembling"
+  | "preparation"
+  | "playback"
+  | "complete";
 
 interface ProcessedRecording extends RecordingData {
   processedUrl: string;
@@ -59,9 +72,11 @@ export default function Player() {
     queryKey: ["/api/kits", id],
   });
 
-  const { data: affirmations, isLoading: affLoading } = useQuery<Affirmation[]>({
-    queryKey: ["/api/kits", id, "affirmations"],
-  });
+  const { data: affirmations, isLoading: affLoading } = useQuery<Affirmation[]>(
+    {
+      queryKey: ["/api/kits", id, "affirmations"],
+    },
+  );
 
   const { data: visuals } = useQuery<KitVisual[]>({
     queryKey: ["/api/visuals", kit?.category],
@@ -69,19 +84,29 @@ export default function Player() {
   });
 
   const [mode, setMode] = useState<PlayerMode>("build");
-  const [recordings, setRecordings] = useState<Map<string, ProcessedRecording>>(new Map());
+  const [recordings, setRecordings] = useState<Map<string, ProcessedRecording>>(
+    new Map(),
+  );
   const [isPlayingBack, setIsPlayingBack] = useState(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [frequencyVolume, setFrequencyVolume] = useState(0.15);
   const [frequencyMuted, setFrequencyMuted] = useState(false);
   const [playbackElapsed, setPlaybackElapsed] = useState(0);
-  const [uploadedSong, setUploadedSong] = useState<{ file: File; url: string; name: string } | null>(null);
+  const [uploadedSong, setUploadedSong] = useState<{
+    file: File;
+    url: string;
+    name: string;
+  } | null>(null);
   const [songVolume, setSongVolume] = useState(0.35);
   const [songMuted, setSongMuted] = useState(false);
   const [currentPlaybackIndex, setCurrentPlaybackIndex] = useState(0);
 
-  const [selectedAffirmationIds, setSelectedAffirmationIds] = useState<Set<string>>(new Set());
-  const [selectedVisualIds, setSelectedVisualIds] = useState<Set<string>>(new Set());
+  const [selectedAffirmationIds, setSelectedAffirmationIds] = useState<
+    Set<string>
+  >(new Set());
+  const [selectedVisualIds, setSelectedVisualIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [currentVisualIndex, setCurrentVisualIndex] = useState(0);
 
   const [recordingAffId, setRecordingAffId] = useState<string | null>(null);
@@ -90,19 +115,28 @@ export default function Player() {
   const [assemblyProgress, setAssemblyProgress] = useState(0);
   const [assemblyStep, setAssemblyStep] = useState("");
   const [prepStep, setPrepStep] = useState(0);
-  const [breathPhase, setBreathPhase] = useState<"inhale" | "hold" | "exhale">("inhale");
+  const [breathPhase, setBreathPhase] = useState<"inhale" | "hold" | "exhale">(
+    "inhale",
+  );
   const [breathTimer, setBreathTimer] = useState(7);
   const [breathCycle, setBreathCycle] = useState(1);
   const [relaxationIndex, setRelaxationIndex] = useState(0);
   const [countdownNumber, setCountdownNumber] = useState(10);
   const [countdownText, setCountdownText] = useState("");
 
+  const [hasUnlockedReplay, setHasUnlockedReplay] = useState(false);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+
   const frequency = useFrequency();
   const recorder = useVoiceRecorder();
   const voiceProcessor = useVoiceProcessor();
   const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prevAudioRef = useRef<HTMLAudioElement | null>(null);
   const songAudioRef = useRef<HTMLAudioElement | null>(null);
+  const songGainNodeRef = useRef<GainNode | null>(null);
+  const songSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const songFileInputRef = useRef<HTMLInputElement | null>(null);
   const playbackIndexRef = useRef(0);
   const visualIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -110,21 +144,27 @@ export default function Player() {
   const assemblyTimersRef = useRef<NodeJS.Timeout[]>([]);
   const assemblyCancelledRef = useRef(false);
   const prepTimersRef = useRef<NodeJS.Timeout[]>([]);
+  const playbackIntervalsRef = useRef<NodeJS.Timeout[]>([]);
+  const fadeIntervalsRef = useRef<NodeJS.Timeout[]>([]);
+  const createdUrlsRef = useRef<Set<string>>(new Set());
 
   const selectedAffirmations = useMemo(
     () => affirmations?.filter((a) => selectedAffirmationIds.has(a.id)) || [],
-    [affirmations, selectedAffirmationIds]
+    [affirmations, selectedAffirmationIds],
   );
 
   const selectedVisuals = useMemo(
     () => visuals?.filter((v) => selectedVisualIds.has(v.id)) || [],
-    [visuals, selectedVisualIds]
+    [visuals, selectedVisualIds],
   );
 
   const currentAffirmation = selectedAffirmations[currentPlaybackIndex];
   const totalAffirmations = selectedAffirmations.length;
-  const recordedCount = selectedAffirmations.filter((a) => recordings.has(a.id)).length;
-  const allRecorded = totalAffirmations > 0 && recordedCount === totalAffirmations;
+  const recordedCount = selectedAffirmations.filter((a) =>
+    recordings.has(a.id),
+  ).length;
+  const allRecorded =
+    totalAffirmations > 0 && recordedCount === totalAffirmations;
 
   const toggleAffirmation = useCallback((affId: string) => {
     setSelectedAffirmationIds((prev) => {
@@ -160,28 +200,32 @@ export default function Player() {
     });
   }, []);
 
-  const handleSongUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("audio/")) {
+  const handleSongUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (!file.type.startsWith("audio/")) {
+        toast({
+          title: "Invalid File",
+          description: "Please upload an audio file (MP3, WAV, AAC, etc.)",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (uploadedSong) {
+        URL.revokeObjectURL(uploadedSong.url);
+      }
+      const url = URL.createObjectURL(file);
+      createdUrlsRef.current.add(url);
+      setUploadedSong({ file, url, name: file.name });
       toast({
-        title: "Invalid File",
-        description: "Please upload an audio file (MP3, WAV, AAC, etc.)",
-        variant: "destructive",
+        title: "Song Added",
+        description: `"${file.name}" will play in the background of your vision movie.`,
       });
-      return;
-    }
-    if (uploadedSong) {
-      URL.revokeObjectURL(uploadedSong.url);
-    }
-    const url = URL.createObjectURL(file);
-    setUploadedSong({ file, url, name: file.name });
-    toast({
-      title: "Song Added",
-      description: `"${file.name}" will play in the background of your vision movie.`,
-    });
-    if (songFileInputRef.current) songFileInputRef.current.value = "";
-  }, [uploadedSong, toast]);
+      if (songFileInputRef.current) songFileInputRef.current.value = "";
+    },
+    [uploadedSong, toast],
+  );
 
   const handleRemoveSong = useCallback(() => {
     if (uploadedSong) {
@@ -191,122 +235,171 @@ export default function Player() {
     }
   }, [uploadedSong, toast]);
 
-  const handleStartRecordingFor = useCallback(async (affId: string) => {
-    if (recordingAffId) return;
-    try {
-      await recorder.startRecording();
-      setRecordingAffId(affId);
-    } catch {
-      toast({
-        title: "Microphone Access Required",
-        description: "Please allow microphone access to record your affirmations.",
-        variant: "destructive",
-      });
-    }
-  }, [recorder, toast, recordingAffId]);
-
-  const handleStopRecordingFor = useCallback(async (affId: string) => {
-    try {
-      const data = await recorder.stopRecording();
-      setRecordingAffId(null);
-      setProcessingAffId(affId);
-
-      toast({
-        title: "Processing Voice",
-        description: "Optimizing your voice to the ideal hypnotic pitch...",
-      });
-
+  const handleStartRecordingFor = useCallback(
+    async (affId: string) => {
+      if (recordingAffId) return;
       try {
-        const processed = await voiceProcessor.processVoice(data.blob);
-
-        const processedRecording: ProcessedRecording = {
-          ...data,
-          processedUrl: processed.url,
-          processedBlob: processed.blob,
-        };
-
-        setRecordings((prev) => {
-          const next = new Map(prev);
-          next.set(affId, processedRecording);
-          return next;
-        });
-
-        toast({
-          title: "Recording Saved",
-          description: "Your voice has been auto-tuned to the perfect trance pitch.",
-        });
+        await recorder.startRecording();
+        setRecordingAffId(affId);
       } catch {
-        const processedRecording: ProcessedRecording = {
-          ...data,
-          processedUrl: data.url,
-          processedBlob: data.blob,
-        };
-
-        setRecordings((prev) => {
-          const next = new Map(prev);
-          next.set(affId, processedRecording);
-          return next;
+        toast({
+          title: "Microphone Access Required",
+          description:
+            "Please allow microphone access to record your affirmations.",
+          variant: "destructive",
         });
+      }
+    },
+    [recorder, toast, recordingAffId],
+  );
+
+  const handleStopRecordingFor = useCallback(
+    async (affId: string) => {
+      try {
+        const data = await recorder.stopRecording();
+        setRecordingAffId(null);
+        setProcessingAffId(affId);
 
         toast({
-          title: "Recording Saved",
-          description: "Voice saved (pitch processing unavailable).",
+          title: "Processing Voice",
+          description: "Optimizing your voice to the ideal hypnotic pitch...",
+        });
+
+        try {
+          const processed = await voiceProcessor.processVoice(data.blob);
+
+          createdUrlsRef.current.add(data.url);
+          createdUrlsRef.current.add(processed.url);
+
+          const processedRecording: ProcessedRecording = {
+            ...data,
+            processedUrl: processed.url,
+            processedBlob: processed.blob,
+          };
+
+          setRecordings((prev) => {
+            const next = new Map(prev);
+            next.set(affId, processedRecording);
+            return next;
+          });
+
+          toast({
+            title: "Recording Saved",
+            description:
+              "Your voice has been auto-tuned to the perfect trance pitch.",
+          });
+        } catch {
+          createdUrlsRef.current.add(data.url);
+
+          const processedRecording: ProcessedRecording = {
+            ...data,
+            processedUrl: data.url,
+            processedBlob: data.blob,
+          };
+
+          setRecordings((prev) => {
+            const next = new Map(prev);
+            next.set(affId, processedRecording);
+            return next;
+          });
+
+          toast({
+            title: "Recording Saved",
+            description: "Voice saved (pitch processing unavailable).",
+          });
+        }
+      } catch {
+        toast({
+          title: "Recording Error",
+          description: "Failed to save recording. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setProcessingAffId(null);
+      }
+    },
+    [recorder, voiceProcessor, toast],
+  );
+
+  const handlePlayRecording = useCallback(
+    (affId: string, useProcessed = true) => {
+      const rec = recordings.get(affId);
+      if (!rec) return;
+
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+
+      if (playingAffId === affId) {
+        setPlayingAffId(null);
+        return;
+      }
+
+      const audio = new Audio(useProcessed ? rec.processedUrl : rec.url);
+      previewAudioRef.current = audio;
+      setPlayingAffId(affId);
+      audio.onended = () => {
+        setPlayingAffId(null);
+        previewAudioRef.current = null;
+      };
+      audio.play();
+    },
+    [recordings, playingAffId],
+  );
+
+  const handleDeleteRecording = useCallback(
+    (affId: string) => {
+      setRecordings((prev) => {
+        const next = new Map(prev);
+        const rec = next.get(affId);
+        if (rec) {
+          URL.revokeObjectURL(rec.url);
+          URL.revokeObjectURL(rec.processedUrl);
+        }
+        next.delete(affId);
+        return next;
+      });
+      if (playingAffId === affId) {
+        previewAudioRef.current?.pause();
+        previewAudioRef.current = null;
+        setPlayingAffId(null);
+      }
+    },
+    [playingAffId],
+  );
+
+  const startPlaybackRef = useRef<() => void>(() => {});
+
+  const handleUnlockReplay = useCallback(async () => {
+    if (!kit) return;
+    setIsCheckingOut(true);
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kitId: kit.id }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        toast({
+          title: "Checkout Error",
+          description: "Unable to start checkout. Please try again.",
+          variant: "destructive",
         });
       }
     } catch {
       toast({
-        title: "Recording Error",
-        description: "Failed to save recording. Please try again.",
+        title: "Connection Error",
+        description: "Could not connect to payment server.",
         variant: "destructive",
       });
     } finally {
-      setProcessingAffId(null);
+      setIsCheckingOut(false);
     }
-  }, [recorder, voiceProcessor, toast]);
-
-  const handlePlayRecording = useCallback((affId: string, useProcessed = true) => {
-    const rec = recordings.get(affId);
-    if (!rec) return;
-
-    if (previewAudioRef.current) {
-      previewAudioRef.current.pause();
-      previewAudioRef.current = null;
-    }
-
-    if (playingAffId === affId) {
-      setPlayingAffId(null);
-      return;
-    }
-
-    const audio = new Audio(useProcessed ? rec.processedUrl : rec.url);
-    previewAudioRef.current = audio;
-    setPlayingAffId(affId);
-    audio.onended = () => {
-      setPlayingAffId(null);
-      previewAudioRef.current = null;
-    };
-    audio.play();
-  }, [recordings, playingAffId]);
-
-  const handleDeleteRecording = useCallback((affId: string) => {
-    setRecordings((prev) => {
-      const next = new Map(prev);
-      const rec = next.get(affId);
-      if (rec) {
-        URL.revokeObjectURL(rec.url);
-        URL.revokeObjectURL(rec.processedUrl);
-      }
-      next.delete(affId);
-      return next;
-    });
-    if (playingAffId === affId) {
-      previewAudioRef.current?.pause();
-      previewAudioRef.current = null;
-      setPlayingAffId(null);
-    }
-  }, [playingAffId]);
-
-  const startPlaybackRef = useRef<() => void>(() => {});
+  }, [kit, toast]);
 
   const clearAssemblyTimers = useCallback(() => {
     assemblyTimersRef.current.forEach(clearTimeout);
@@ -326,10 +419,28 @@ export default function Player() {
 
     const steps = [
       { progress: 15, label: "Weaving your visuals together...", delay: 800 },
-      { progress: 30, label: "Layering your recorded affirmations...", delay: 1200 },
-      { progress: 50, label: `Tuning ${kit.frequencyHz} Hz Solfeggio frequency...`, delay: 1000 },
-      { progress: 65, label: "Synchronizing theta binaural beats...", delay: 900 },
-      { progress: 80, label: uploadedSong ? `Mixing "${uploadedSong.name}"...` : "Balancing audio layers...", delay: 1100 },
+      {
+        progress: 30,
+        label: "Layering your recorded affirmations...",
+        delay: 1200,
+      },
+      {
+        progress: 50,
+        label: `Tuning ${kit.frequencyHz} Hz Solfeggio frequency...`,
+        delay: 1000,
+      },
+      {
+        progress: 65,
+        label: "Synchronizing theta binaural beats...",
+        delay: 900,
+      },
+      {
+        progress: 80,
+        label: uploadedSong
+          ? `Mixing "${uploadedSong.name}"...`
+          : "Balancing audio layers...",
+        delay: 1100,
+      },
       { progress: 92, label: "Finalizing your vision movie...", delay: 800 },
       { progress: 100, label: "Your movie is ready", delay: 600 },
     ];
@@ -357,6 +468,72 @@ export default function Player() {
     runStep();
   }, [selectedAffirmations, kit, uploadedSong, mode, clearAssemblyTimers]);
 
+  const duckSong = useCallback((duck: boolean) => {
+    if (!songGainNodeRef.current || !audioCtxRef.current) return;
+    const ctx = audioCtxRef.current;
+    const gain = songGainNodeRef.current;
+    const target = duck ? songVolume * 0.4 : songVolume;
+    gain.gain.cancelScheduledValues(ctx.currentTime);
+    gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(
+      songMuted ? 0 : target,
+      ctx.currentTime + 0.3,
+    );
+  }, [songVolume, songMuted]);
+
+  const clearFadeIntervals = useCallback(() => {
+    fadeIntervalsRef.current.forEach(clearInterval);
+    fadeIntervalsRef.current = [];
+  }, []);
+
+  const crossfadeToAffirmation = useCallback((processedUrl: string) => {
+    const FADE_MS = 300;
+
+    if (audioRef.current) {
+      const outgoing = audioRef.current;
+      prevAudioRef.current = outgoing;
+      const startVol = outgoing.volume;
+      const fadeSteps = 15;
+      const stepTime = FADE_MS / fadeSteps;
+      let step = 0;
+      const fadeOut = setInterval(() => {
+        step++;
+        outgoing.volume = Math.max(0, startVol * (1 - step / fadeSteps));
+        if (step >= fadeSteps) {
+          clearInterval(fadeOut);
+          outgoing.pause();
+          outgoing.removeAttribute("src");
+          prevAudioRef.current = null;
+        }
+      }, stepTime);
+      fadeIntervalsRef.current.push(fadeOut);
+    }
+
+    duckSong(true);
+
+    const audio = new Audio(processedUrl);
+    audio.volume = 0;
+    audioRef.current = audio;
+
+    audio.onended = () => {
+      duckSong(false);
+    };
+
+    audio.play().then(() => {
+      const fadeSteps = 15;
+      const stepTime = FADE_MS / fadeSteps;
+      let step = 0;
+      const fadeIn = setInterval(() => {
+        step++;
+        audio.volume = Math.min(1, step / fadeSteps);
+        if (step >= fadeSteps) {
+          clearInterval(fadeIn);
+        }
+      }, stepTime);
+      fadeIntervalsRef.current.push(fadeIn);
+    }).catch(() => {});
+  }, [duckSong]);
+
   const startPlayback = useCallback(() => {
     if (!selectedAffirmations.length || !kit) return;
 
@@ -368,16 +545,35 @@ export default function Player() {
     setCurrentPlaybackIndex(0);
     setCurrentVisualIndex(0);
 
+    playbackIntervalsRef.current.forEach(clearInterval);
+    playbackIntervalsRef.current = [];
+    clearFadeIntervals();
+
     if (!frequency.isPlaying) {
       frequency.start(kit.frequencyHz);
       frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
     }
 
     if (uploadedSong) {
+      const ctx = audioCtxRef.current || new AudioContext();
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+
       const songEl = new Audio(uploadedSong.url);
       songEl.loop = true;
-      songEl.volume = songMuted ? 0 : songVolume;
+      songEl.crossOrigin = "anonymous";
       songAudioRef.current = songEl;
+
+      if (!songSourceRef.current) {
+        const source = ctx.createMediaElementSource(songEl);
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = songMuted ? 0 : songVolume;
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        songSourceRef.current = source;
+        songGainNodeRef.current = gainNode;
+      }
+
       songEl.play().catch(() => {});
     }
 
@@ -400,6 +596,12 @@ export default function Player() {
           songAudioRef.current.pause();
           songAudioRef.current = null;
         }
+        songSourceRef.current = null;
+        songGainNodeRef.current = null;
+        if (audioCtxRef.current) {
+          audioCtxRef.current.close().catch(() => {});
+          audioCtxRef.current = null;
+        }
         if (visualIntervalRef.current) {
           clearInterval(visualIntervalRef.current);
           visualIntervalRef.current = null;
@@ -413,17 +615,7 @@ export default function Player() {
       const rec = recordings.get(aff.id);
 
       if (rec) {
-        const audio = new Audio(rec.processedUrl);
-        audioRef.current = audio;
-        if (songAudioRef.current) {
-          songAudioRef.current.volume = songMuted ? 0 : songVolume * 0.4;
-        }
-        audio.onended = () => {
-          if (songAudioRef.current) {
-            songAudioRef.current.volume = songMuted ? 0 : songVolume;
-          }
-        };
-        audio.play();
+        crossfadeToAffirmation(rec.processedUrl);
       }
 
       const stepInterval = setInterval(() => {
@@ -431,6 +623,7 @@ export default function Player() {
         setPlaybackElapsed(elapsed);
         setPlaybackProgress((elapsed / totalDuration) * 100);
       }, 100);
+      playbackIntervalsRef.current.push(stepInterval);
 
       playbackTimerRef.current = setTimeout(() => {
         clearInterval(stepInterval);
@@ -440,7 +633,20 @@ export default function Player() {
     };
 
     playNext();
-  }, [selectedAffirmations, selectedVisuals, kit, frequency, recordings, frequencyMuted, frequencyVolume, uploadedSong, songVolume, songMuted]);
+  }, [
+    selectedAffirmations,
+    selectedVisuals,
+    kit,
+    frequency,
+    recordings,
+    frequencyMuted,
+    frequencyVolume,
+    uploadedSong,
+    songVolume,
+    songMuted,
+    crossfadeToAffirmation,
+    clearFadeIntervals,
+  ]);
 
   startPlaybackRef.current = startPlayback;
 
@@ -457,10 +663,27 @@ export default function Player() {
     if (playbackTimerRef.current) {
       clearTimeout(playbackTimerRef.current);
     }
+    playbackIntervalsRef.current.forEach(clearInterval);
+    playbackIntervalsRef.current = [];
+    clearFadeIntervals();
     audioRef.current?.pause();
+    prevAudioRef.current?.pause();
+    prevAudioRef.current = null;
     if (songAudioRef.current) {
       songAudioRef.current.pause();
       songAudioRef.current = null;
+    }
+    if (songSourceRef.current) {
+      try { songSourceRef.current.disconnect(); } catch {}
+      songSourceRef.current = null;
+    }
+    if (songGainNodeRef.current) {
+      try { songGainNodeRef.current.disconnect(); } catch {}
+      songGainNodeRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
     }
     if (visualIntervalRef.current) {
       clearInterval(visualIntervalRef.current);
@@ -468,7 +691,7 @@ export default function Player() {
     }
     frequency.stop();
     setIsPlayingBack(false);
-  }, [frequency]);
+  }, [frequency, clearFadeIntervals]);
 
   const clearPrepTimers = useCallback(() => {
     prepTimersRef.current.forEach(clearTimeout);
@@ -484,9 +707,21 @@ export default function Player() {
   }, [clearPrepTimers, frequency, frequencyMuted, frequencyVolume]);
 
   const vagusNerveExercises = [
-    { title: "Slow Diaphragmatic Breathing", instruction: "Place one hand on your chest, one on your belly. Breathe deeply so only your belly hand rises. Take 3 slow, deep breaths through your nose now." },
-    { title: "Extended Exhale", instruction: "Inhale through your nose for 4 seconds, then exhale slowly through pursed lips for 8 seconds. The long exhale activates your vagus nerve and triggers deep calm. Do this 3 times." },
-    { title: "Gentle Humming", instruction: "Take a deep breath in, then hum gently as you exhale — feel the vibration in your throat and chest. The vibration stimulates your vagus nerve directly. Hum through 3 exhales." },
+    {
+      title: "Slow Diaphragmatic Breathing",
+      instruction:
+        "Place one hand on your chest, one on your belly. Breathe deeply so only your belly hand rises. Take 3 slow, deep breaths through your nose now.",
+    },
+    {
+      title: "Extended Exhale",
+      instruction:
+        "Inhale through your nose for 4 seconds, then exhale slowly through pursed lips for 8 seconds. The long exhale activates your vagus nerve and triggers deep calm. Do this 3 times.",
+    },
+    {
+      title: "Gentle Humming",
+      instruction:
+        "Take a deep breath in, then hum gently as you exhale — feel the vibration in your throat and chest. The vibration stimulates your vagus nerve directly. Hum through 3 exhales.",
+    },
   ];
 
   const relaxationBodyParts = [
@@ -505,16 +740,46 @@ export default function Player() {
   ];
 
   const countdownSteps = [
-    { num: 10, text: "You are at the top of a beautiful staircase bathed in warm, golden light..." },
-    { num: 9, text: "With each step down, you feel yourself drifting deeper into peaceful awareness..." },
-    { num: 8, text: "Deeper and deeper... every step takes you closer to the core of your subconscious mind..." },
-    { num: 7, text: "The light grows warmer... softer... you feel completely safe and held..." },
-    { num: 6, text: "Your conscious mind rests now... your inner mind opens like a flower to the sun..." },
-    { num: 5, text: "Halfway down... you are entering the theta state... the doorway to transformation..." },
-    { num: 4, text: "Deeper still... your subconscious is fully open, ready to receive your new truth..." },
-    { num: 3, text: "Almost there... every cell in your body is listening, absorbing, accepting..." },
-    { num: 2, text: "One more step... you are in the deepest state of receptivity..." },
-    { num: 1, text: "You are here. Your subconscious mind is wide open. Your vision movie begins now..." },
+    {
+      num: 10,
+      text: "You are at the top of a beautiful staircase bathed in warm, golden light...",
+    },
+    {
+      num: 9,
+      text: "With each step down, you feel yourself drifting deeper into peaceful awareness...",
+    },
+    {
+      num: 8,
+      text: "Deeper and deeper... every step takes you closer to the core of your subconscious mind...",
+    },
+    {
+      num: 7,
+      text: "The light grows warmer... softer... you feel completely safe and held...",
+    },
+    {
+      num: 6,
+      text: "Your conscious mind rests now... your inner mind opens like a flower to the sun...",
+    },
+    {
+      num: 5,
+      text: "Halfway down... you are entering the theta state... the doorway to transformation...",
+    },
+    {
+      num: 4,
+      text: "Deeper still... your subconscious is fully open, ready to receive your new truth...",
+    },
+    {
+      num: 3,
+      text: "Almost there... every cell in your body is listening, absorbing, accepting...",
+    },
+    {
+      num: 2,
+      text: "One more step... you are in the deepest state of receptivity...",
+    },
+    {
+      num: 1,
+      text: "You are here. Your subconscious mind is wide open. Your vision movie begins now...",
+    },
   ];
 
   const startBreathingExercise = useCallback(() => {
@@ -641,7 +906,18 @@ export default function Player() {
   }, [frequencyVolume, frequencyMuted, frequency]);
 
   useEffect(() => {
-    if (songAudioRef.current) {
+    if (songGainNodeRef.current && audioCtxRef.current) {
+      const ctx = audioCtxRef.current;
+      songGainNodeRef.current.gain.cancelScheduledValues(ctx.currentTime);
+      songGainNodeRef.current.gain.setValueAtTime(
+        songGainNodeRef.current.gain.value,
+        ctx.currentTime,
+      );
+      songGainNodeRef.current.gain.linearRampToValueAtTime(
+        songMuted ? 0 : songVolume,
+        ctx.currentTime + 0.1,
+      );
+    } else if (songAudioRef.current) {
       songAudioRef.current.volume = songMuted ? 0 : songVolume;
     }
   }, [songVolume, songMuted]);
@@ -650,15 +926,46 @@ export default function Player() {
     return () => {
       if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
       if (visualIntervalRef.current) clearInterval(visualIntervalRef.current);
+      playbackIntervalsRef.current.forEach(clearInterval);
+      playbackIntervalsRef.current = [];
+      fadeIntervalsRef.current.forEach(clearInterval);
+      fadeIntervalsRef.current = [];
+
+      audioRef.current?.pause();
+      audioRef.current = null;
+      prevAudioRef.current?.pause();
+      prevAudioRef.current = null;
+
       if (songAudioRef.current) {
         songAudioRef.current.pause();
         songAudioRef.current = null;
+      }
+      if (songSourceRef.current) {
+        try { songSourceRef.current.disconnect(); } catch {}
+        songSourceRef.current = null;
+      }
+      if (songGainNodeRef.current) {
+        try { songGainNodeRef.current.disconnect(); } catch {}
+        songGainNodeRef.current = null;
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
       }
       if (previewAudioRef.current) {
         previewAudioRef.current.pause();
         previewAudioRef.current = null;
       }
       frequency.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      createdUrlsRef.current.forEach((url) => {
+        try { URL.revokeObjectURL(url); } catch {}
+      });
+      createdUrlsRef.current.clear();
     };
   }, []);
 
@@ -689,11 +996,13 @@ export default function Player() {
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const canContinueToRecord = selectedAffirmationIds.size >= 5 && selectedVisualIds.size >= 3;
+  const canContinueToRecord =
+    selectedAffirmationIds.size >= 5 && selectedVisualIds.size >= 3;
 
   const previousVisualIndex =
     selectedVisuals.length > 0
-      ? (currentVisualIndex - 1 + selectedVisuals.length) % selectedVisuals.length
+      ? (currentVisualIndex - 1 + selectedVisuals.length) %
+        selectedVisuals.length
       : 0;
 
   return (
@@ -726,21 +1035,37 @@ export default function Player() {
               </Button>
             ) : mode === "assembling" ? null : (
               <Link href={`/kits/${kit.id}`}>
-                <Button variant="ghost" size="icon" data-testid="button-player-back">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  data-testid="button-player-back"
+                >
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
               </Link>
             )}
             <div>
-              <h1 className="font-semibold text-sm" data-testid="text-player-title">{kit.title}</h1>
+              <h1
+                className="font-semibold text-sm"
+                data-testid="text-player-title"
+              >
+                {kit.title}
+              </h1>
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs no-default-hover-elevate no-default-active-elevate">
+                <Badge
+                  variant="secondary"
+                  className="text-xs no-default-hover-elevate no-default-active-elevate"
+                >
                   <Waves className="mr-1 h-2.5 w-2.5" />
                   {kit.frequencyHz} Hz
                 </Badge>
                 {mode === "build" && (
-                  <span className="text-xs text-muted-foreground" data-testid="text-selected-count">
-                    {selectedAffirmationIds.size} affirmations, {selectedVisualIds.size} visuals selected
+                  <span
+                    className="text-xs text-muted-foreground"
+                    data-testid="text-selected-count"
+                  >
+                    {selectedAffirmationIds.size} affirmations,{" "}
+                    {selectedVisualIds.size} visuals selected
                   </span>
                 )}
                 {mode === "record" && (
@@ -770,10 +1095,16 @@ export default function Player() {
       {mode === "build" && (
         <div className="flex-1 mx-auto max-w-6xl w-full px-4 py-8">
           <div className="mb-8 space-y-3">
-            <h2 className="font-serif text-2xl font-bold" data-testid="text-build-title">Build Your Vision Movie</h2>
+            <h2
+              className="font-serif text-2xl font-bold"
+              data-testid="text-build-title"
+            >
+              Build Your Vision Movie
+            </h2>
             <p className="text-muted-foreground max-w-2xl">
-              Select the affirmations and visuals that resonate most deeply with you.
-              You'll choose at least 5 affirmations and 3 visuals to create your personalized experience.
+              Select the affirmations and visuals that resonate most deeply with
+              you. You'll choose at least 5 affirmations and 3 visuals to create
+              your personalized experience.
             </p>
           </div>
 
@@ -782,12 +1113,17 @@ export default function Player() {
               <div>
                 <div className="flex items-center justify-between gap-2 flex-wrap mb-4">
                   <h3 className="font-semibold text-lg">Your Affirmations</h3>
-                  <Badge variant="secondary" className="no-default-hover-elevate no-default-active-elevate">
-                    {selectedAffirmationIds.size} of {affirmations.length} selected
+                  <Badge
+                    variant="secondary"
+                    className="no-default-hover-elevate no-default-active-elevate"
+                  >
+                    {selectedAffirmationIds.size} of {affirmations.length}{" "}
+                    selected
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Choose at least 5 affirmations that speak to your goals. You'll record each one in your own voice in the next step.
+                  Choose at least 5 affirmations that speak to your goals.
+                  You'll record each one in your own voice in the next step.
                 </p>
                 <div className="space-y-1.5 max-h-[55vh] overflow-y-auto pr-1">
                   {affirmations.map((aff, index) => {
@@ -811,8 +1147,12 @@ export default function Player() {
                           )}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <span className="text-xs text-muted-foreground font-mono mr-2">{(index + 1).toString().padStart(2, "0")}</span>
-                          <span className="text-sm leading-relaxed">{aff.text}</span>
+                          <span className="text-xs text-muted-foreground font-mono mr-2">
+                            {(index + 1).toString().padStart(2, "0")}
+                          </span>
+                          <span className="text-sm leading-relaxed">
+                            {aff.text}
+                          </span>
                         </div>
                       </button>
                     );
@@ -828,7 +1168,10 @@ export default function Player() {
                     <Image className="h-4 w-4" />
                     Your Visuals
                   </h3>
-                  <Badge variant="secondary" className="no-default-hover-elevate no-default-active-elevate">
+                  <Badge
+                    variant="secondary"
+                    className="no-default-hover-elevate no-default-active-elevate"
+                  >
                     {selectedVisualIds.size} selected
                   </Badge>
                 </div>
@@ -844,7 +1187,9 @@ export default function Player() {
                           key={visual.id}
                           onClick={() => toggleVisual(visual.id)}
                           className={`relative rounded-md overflow-visible aspect-[4/3] group ${
-                            isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
+                            isSelected
+                              ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                              : ""
                           }`}
                           data-testid={`button-select-visual-${visual.id}`}
                         >
@@ -855,7 +1200,9 @@ export default function Player() {
                           />
                           <div
                             className={`absolute inset-0 rounded-md flex items-center justify-center transition-colors ${
-                              isSelected ? "bg-primary/20" : "bg-black/0 group-hover:bg-black/20"
+                              isSelected
+                                ? "bg-primary/20"
+                                : "bg-black/0 group-hover:bg-black/20"
                             }`}
                           >
                             {isSelected && (
@@ -891,11 +1238,16 @@ export default function Player() {
                       <Music className="h-5 w-5 text-amber-400" />
                     </div>
                     <div className="space-y-1">
-                      <h4 className="font-serif font-bold text-base">Add Your Favorite Song</h4>
+                      <h4 className="font-serif font-bold text-base">
+                        Add Your Favorite Song
+                      </h4>
                       <p className="text-xs text-muted-foreground leading-relaxed">
-                        Upload a song that uplifts or relaxes you — it will play in the forefront of your vision movie
-                        while the {kit.frequencyHz} Hz Solfeggio frequency and theta binaural beats work subliminally in the background.
-                        Music you love deepens the emotional connection and makes each session even more powerful.
+                        Upload a song that uplifts or relaxes you — it will play
+                        in the forefront of your vision movie while the{" "}
+                        {kit.frequencyHz} Hz Solfeggio frequency and theta
+                        binaural beats work subliminally in the background.
+                        Music you love deepens the emotional connection and
+                        makes each session even more powerful.
                       </p>
                     </div>
                   </div>
@@ -914,7 +1266,9 @@ export default function Player() {
                     <div className="space-y-3">
                       <div className="flex items-center gap-3 bg-amber-500/10 rounded-lg p-3">
                         <Headphones className="h-4 w-4 text-amber-400 shrink-0" />
-                        <span className="text-sm truncate flex-1">{uploadedSong.name}</span>
+                        <span className="text-sm truncate flex-1">
+                          {uploadedSong.name}
+                        </span>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -949,24 +1303,36 @@ export default function Player() {
                         />
                       </div>
                       <p className="text-xs text-amber-400/70">
-                        Your song will automatically lower when affirmations play, then return to full volume between them.
+                        Your song will automatically lower when affirmations
+                        play, then return to full volume between them.
                       </p>
                     </div>
                   )}
 
                   <div className="bg-background/50 rounded-lg p-3 space-y-1.5">
-                    <p className="text-xs font-medium text-muted-foreground">During your vision movie:</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      During your vision movie:
+                    </p>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Music className="h-3 w-3 text-amber-400 shrink-0" />
-                      <span>Your song plays at the forefront — the soundtrack to your new reality</span>
+                      <span>
+                        Your song plays at the forefront — the soundtrack to
+                        your new reality
+                      </span>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Mic className="h-3 w-3 text-pink-400 shrink-0" />
-                      <span>Your recorded affirmations play intermittently over the music</span>
+                      <span>
+                        Your recorded affirmations play intermittently over the
+                        music
+                      </span>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Waves className="h-3 w-3 text-purple-400 shrink-0" />
-                      <span>{kit.frequencyHz} Hz Solfeggio + theta beats play subliminally underneath</span>
+                      <span>
+                        {kit.frequencyHz} Hz Solfeggio + theta beats play
+                        subliminally underneath
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -984,7 +1350,9 @@ export default function Player() {
                 Continue to Recording
                 {!canContinueToRecord && (
                   <span className="ml-2 text-xs opacity-70">
-                    (need {Math.max(0, 5 - selectedAffirmationIds.size)} more affirmations, {Math.max(0, 3 - selectedVisualIds.size)} more visuals)
+                    (need {Math.max(0, 5 - selectedAffirmationIds.size)} more
+                    affirmations, {Math.max(0, 3 - selectedVisualIds.size)} more
+                    visuals)
                   </span>
                 )}
               </Button>
@@ -996,11 +1364,17 @@ export default function Player() {
       {mode === "record" && !isPlayingBack && (
         <div className="flex-1 mx-auto max-w-6xl w-full px-4 py-8">
           <div className="mb-6 space-y-3">
-            <h2 className="font-serif text-2xl font-bold" data-testid="text-record-title">Record Your Affirmations</h2>
+            <h2
+              className="font-serif text-2xl font-bold"
+              data-testid="text-record-title"
+            >
+              Record Your Affirmations
+            </h2>
             <p className="text-muted-foreground max-w-2xl">
-              Tap the microphone button next to each affirmation, speak it clearly, then tap stop.
-              Your voice is automatically tuned to the ideal hypnotic pitch for maximum subconscious receptivity.
-              Each recording saves automatically.
+              Tap the microphone button next to each affirmation, speak it
+              clearly, then tap stop. Your voice is automatically tuned to the
+              ideal hypnotic pitch for maximum subconscious receptivity. Each
+              recording saves automatically.
             </p>
           </div>
 
@@ -1037,8 +1411,8 @@ export default function Player() {
                         isRecordingThis
                           ? "border-red-500/50 bg-red-500/5 ring-1 ring-red-500/30"
                           : hasRecording
-                          ? "border-green-500/30 bg-green-500/5"
-                          : ""
+                            ? "border-green-500/30 bg-green-500/5"
+                            : ""
                       }`}
                       data-testid={`card-affirmation-${i}`}
                     >
@@ -1056,7 +1430,9 @@ export default function Player() {
                         </div>
 
                         <div className="flex-1 min-w-0 space-y-2">
-                          <p className={`text-sm leading-relaxed ${isRecordingThis ? "font-semibold text-foreground" : ""}`}>
+                          <p
+                            className={`text-sm leading-relaxed ${isRecordingThis ? "font-semibold text-foreground" : ""}`}
+                          >
                             {aff.text}
                           </p>
 
@@ -1066,20 +1442,27 @@ export default function Player() {
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
                                 <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
                               </span>
-                              <span className="text-xs text-red-500 font-medium">Recording... speak the affirmation above</span>
+                              <span className="text-xs text-red-500 font-medium">
+                                Recording... speak the affirmation above
+                              </span>
                             </div>
                           )}
 
                           {isProcessingThis && (
                             <div className="flex items-center gap-2">
                               <Loader2 className="h-3 w-3 text-purple-400 animate-spin" />
-                              <span className="text-xs text-purple-400 font-medium">Tuning your voice to hypnotic pitch...</span>
+                              <span className="text-xs text-purple-400 font-medium">
+                                Tuning your voice to hypnotic pitch...
+                              </span>
                             </div>
                           )}
 
                           {hasRecording && !isRecordingThis && rec && (
                             <div className="flex items-center gap-2 flex-wrap">
-                              <Badge variant="secondary" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate">
+                              <Badge
+                                variant="secondary"
+                                className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate"
+                              >
                                 <CheckCircle className="h-3 w-3" />
                                 {rec.duration.toFixed(1)}s
                               </Badge>
@@ -1106,7 +1489,9 @@ export default function Player() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs"
-                                onClick={() => handlePlayRecording(aff.id, false)}
+                                onClick={() =>
+                                  handlePlayRecording(aff.id, false)
+                                }
                                 data-testid={`button-play-original-${i}`}
                               >
                                 <Volume2 className="mr-1 h-3 w-3" />
@@ -1179,9 +1564,11 @@ export default function Player() {
                     Voice Processing
                   </h4>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Your recordings are automatically processed to the ideal hypnotic pitch and tonality.
-                    This deepens and warms your voice, adding subtle resonance that helps bypass the conscious
-                    mind's resistance — making your subconscious more receptive to the affirmation message.
+                    Your recordings are automatically processed to the ideal
+                    hypnotic pitch and tonality. This deepens and warms your
+                    voice, adding subtle resonance that helps bypass the
+                    conscious mind's resistance — making your subconscious more
+                    receptive to the affirmation message.
                   </p>
                   <div className="bg-purple-500/5 border border-purple-500/10 rounded-lg p-3 space-y-1.5">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -1207,9 +1594,14 @@ export default function Player() {
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div className="flex items-center gap-2">
                       <Waves className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">Theta Binaural Beat</span>
+                      <span className="text-sm font-medium">
+                        Theta Binaural Beat
+                      </span>
                     </div>
-                    <Badge variant="secondary" className="font-mono text-xs no-default-hover-elevate no-default-active-elevate">
+                    <Badge
+                      variant="secondary"
+                      className="font-mono text-xs no-default-hover-elevate no-default-active-elevate"
+                    >
                       {kit.frequencyHz} Hz
                     </Badge>
                   </div>
@@ -1322,8 +1714,9 @@ export default function Player() {
                   ) : (
                     <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-3">
                       <p className="text-xs text-muted-foreground leading-relaxed">
-                        Add a song you love! It plays in the forefront of your vision movie while
-                        the healing frequency works subliminally underneath.
+                        Add a song you love! It plays in the forefront of your
+                        vision movie while the healing frequency works
+                        subliminally underneath.
                       </p>
                     </div>
                   )}
@@ -1339,11 +1732,14 @@ export default function Player() {
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <h4 className="font-serif font-bold text-base">All Pieces Ready</h4>
+                        <h4 className="font-serif font-bold text-base">
+                          All Pieces Ready
+                        </h4>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                          {selectedVisualIds.size} visuals, {totalAffirmations} recorded affirmations
-                          {uploadedSong ? `, and "${uploadedSong.name}"` : ""} — ready to be woven into your
-                          personalized vision movie.
+                          {selectedVisualIds.size} visuals, {totalAffirmations}{" "}
+                          recorded affirmations
+                          {uploadedSong ? `, and "${uploadedSong.name}"` : ""} —
+                          ready to be woven into your personalized vision movie.
                         </p>
                       </div>
                       <Button
@@ -1356,7 +1752,8 @@ export default function Player() {
                         Complete My Movie
                       </Button>
                       <p className="text-[11px] text-muted-foreground/70">
-                        This will assemble all your choices into a seamless, entrancing experience
+                        This will assemble all your choices into a seamless,
+                        entrancing experience
                       </p>
                     </div>
                   </div>
@@ -1379,45 +1776,63 @@ export default function Player() {
           <div className="absolute inset-0 bg-black/80" />
 
           <div className="relative flex flex-col items-center justify-center h-full min-h-[70vh] px-4">
-            <div className="text-center space-y-8 max-w-lg">
-              <div className="relative mx-auto w-20 h-20">
-                <div className="absolute inset-0 rounded-full bg-gradient-to-br from-purple-500/30 via-amber-500/20 to-pink-500/30 animate-pulse" />
-                <div className="absolute inset-2 rounded-full bg-gradient-to-br from-purple-500/10 to-pink-500/10 animate-spin" style={{ animationDuration: "3s" }} />
-                <div className="relative flex items-center justify-center h-full">
-                  <Film className="h-10 w-10 text-purple-400" />
-                </div>
-              </div>
+            <div className="premium-border rounded-2xl max-w-lg w-full">
+              <Card className="bg-black/60 backdrop-blur-xl border-0 rounded-2xl p-8">
+                <div className="text-center space-y-8">
+                  <div className="relative mx-auto w-20 h-20">
+                    <div className="absolute inset-0 rounded-full bg-gradient-to-br from-purple-500/30 via-amber-500/20 to-pink-500/30 animate-pulse" />
+                    <div
+                      className="absolute inset-2 rounded-full bg-gradient-to-br from-purple-500/10 to-pink-500/10 animate-spin"
+                      style={{ animationDuration: "3s" }}
+                    />
+                    <div className="relative flex items-center justify-center h-full">
+                      <Film className="h-10 w-10 text-purple-400" />
+                    </div>
+                  </div>
 
-              <div className="space-y-2">
-                <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white" data-testid="text-assembling-title">
-                  Assembling Your Vision Movie
-                </h2>
-                <p className="text-sm text-white/60">
-                  Weaving your personal choices into a seamless, entrancing experience
-                </p>
-              </div>
+                  <div className="space-y-2">
+                    <h2
+                      className="font-serif text-2xl sm:text-3xl font-bold text-white"
+                      data-testid="text-assembling-title"
+                    >
+                      Assembling Your Vision Movie
+                    </h2>
+                    <p className="text-sm text-white/60">
+                      Weaving your personal choices into a seamless, entrancing
+                      experience
+                    </p>
+                  </div>
 
-              <div className="space-y-3 max-w-sm mx-auto">
-                <Progress value={assemblyProgress} className="h-2" />
-                <p className="text-sm text-white/80 font-medium" data-testid="text-assembly-step">
-                  {assemblyStep}
-                </p>
-              </div>
+                  <div className="space-y-3 max-w-sm mx-auto">
+                    <Progress value={assemblyProgress} className="h-2" />
+                    <p
+                      className="text-sm text-white/80 font-medium"
+                      data-testid="text-assembly-step"
+                    >
+                      {assemblyStep}
+                    </p>
+                  </div>
 
-              <div className="grid grid-cols-3 gap-4 pt-4 max-w-xs mx-auto">
-                <div className="text-center space-y-1">
-                  <Image className="h-5 w-5 text-purple-400 mx-auto" />
-                  <p className="text-xs text-white/50">{selectedVisualIds.size} Visuals</p>
+                  <div className="grid grid-cols-3 gap-4 pt-4 max-w-xs mx-auto">
+                    <div className="text-center space-y-1">
+                      <Image className="h-5 w-5 text-purple-400 mx-auto" />
+                      <p className="text-xs text-white/50">
+                        {selectedVisualIds.size} Visuals
+                      </p>
+                    </div>
+                    <div className="text-center space-y-1">
+                      <Mic className="h-5 w-5 text-pink-400 mx-auto" />
+                      <p className="text-xs text-white/50">
+                        {totalAffirmations} Voices
+                      </p>
+                    </div>
+                    <div className="text-center space-y-1">
+                      <Waves className="h-5 w-5 text-amber-400 mx-auto" />
+                      <p className="text-xs text-white/50">{kit.frequencyHz} Hz</p>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-center space-y-1">
-                  <Mic className="h-5 w-5 text-pink-400 mx-auto" />
-                  <p className="text-xs text-white/50">{totalAffirmations} Voices</p>
-                </div>
-                <div className="text-center space-y-1">
-                  <Waves className="h-5 w-5 text-amber-400 mx-auto" />
-                  <p className="text-xs text-white/50">{kit.frequencyHz} Hz</p>
-                </div>
-              </div>
+              </Card>
             </div>
           </div>
         </div>
@@ -1461,7 +1876,10 @@ export default function Player() {
               </div>
 
               {prepStep === 0 && (
-                <div className="space-y-8 animate-in fade-in duration-700" data-testid="prep-vagus-nerve">
+                <div
+                  className="space-y-8 animate-in fade-in duration-700"
+                  data-testid="prep-vagus-nerve"
+                >
                   <div className="space-y-3">
                     <div className="flex items-center justify-center gap-2">
                       <Heart className="h-6 w-6 text-rose-400" />
@@ -1470,21 +1888,29 @@ export default function Player() {
                       Vagus Nerve Reset
                     </h2>
                     <p className="text-sm text-white/60 max-w-md mx-auto">
-                      Activating your vagus nerve switches your nervous system from fight-or-flight
-                      to rest-and-receive — the ideal state for subconscious reprogramming.
+                      Activating your vagus nerve switches your nervous system
+                      from fight-or-flight to rest-and-receive — the ideal state
+                      for subconscious reprogramming.
                     </p>
                   </div>
 
                   <div className="space-y-4 text-left max-w-md mx-auto">
                     {vagusNerveExercises.map((ex, i) => (
-                      <Card key={i} className="bg-white/5 border-white/10 p-4 space-y-2">
+                      <Card
+                        key={i}
+                        className="bg-white/5 border-white/10 p-4 space-y-2"
+                      >
                         <div className="flex items-center gap-2">
                           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/20 text-rose-400 text-xs font-bold">
                             {i + 1}
                           </span>
-                          <h4 className="text-sm font-semibold text-white">{ex.title}</h4>
+                          <h4 className="text-sm font-semibold text-white">
+                            {ex.title}
+                          </h4>
                         </div>
-                        <p className="text-xs text-white/60 leading-relaxed pl-8">{ex.instruction}</p>
+                        <p className="text-xs text-white/60 leading-relaxed pl-8">
+                          {ex.instruction}
+                        </p>
                       </Card>
                     ))}
                   </div>
@@ -1502,7 +1928,10 @@ export default function Player() {
               )}
 
               {prepStep === 1 && (
-                <div className="space-y-8 animate-in fade-in duration-700" data-testid="prep-breathing">
+                <div
+                  className="space-y-8 animate-in fade-in duration-700"
+                  data-testid="prep-breathing"
+                >
                   <div className="space-y-2">
                     <Wind className="h-6 w-6 text-sky-400 mx-auto" />
                     <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white">
@@ -1517,18 +1946,50 @@ export default function Player() {
                     <div
                       className="rounded-full border-2 flex items-center justify-center transition-all duration-1000 ease-in-out"
                       style={{
-                        width: breathPhase === "inhale" ? "200px" : breathPhase === "hold" ? "200px" : "120px",
-                        height: breathPhase === "inhale" ? "200px" : breathPhase === "hold" ? "200px" : "120px",
-                        borderColor: breathPhase === "inhale" ? "rgba(56, 189, 248, 0.5)" : breathPhase === "hold" ? "rgba(168, 85, 247, 0.5)" : "rgba(52, 211, 153, 0.5)",
-                        backgroundColor: breathPhase === "inhale" ? "rgba(56, 189, 248, 0.08)" : breathPhase === "hold" ? "rgba(168, 85, 247, 0.08)" : "rgba(52, 211, 153, 0.08)",
+                        width:
+                          breathPhase === "inhale"
+                            ? "200px"
+                            : breathPhase === "hold"
+                              ? "200px"
+                              : "120px",
+                        height:
+                          breathPhase === "inhale"
+                            ? "200px"
+                            : breathPhase === "hold"
+                              ? "200px"
+                              : "120px",
+                        borderColor:
+                          breathPhase === "inhale"
+                            ? "rgba(56, 189, 248, 0.5)"
+                            : breathPhase === "hold"
+                              ? "rgba(168, 85, 247, 0.5)"
+                              : "rgba(52, 211, 153, 0.5)",
+                        backgroundColor:
+                          breathPhase === "inhale"
+                            ? "rgba(56, 189, 248, 0.08)"
+                            : breathPhase === "hold"
+                              ? "rgba(168, 85, 247, 0.08)"
+                              : "rgba(52, 211, 153, 0.08)",
                       }}
                     >
                       <div className="text-center">
-                        <p className="text-4xl font-bold text-white font-mono">{breathTimer}</p>
-                        <p className={`text-sm font-semibold mt-1 ${
-                          breathPhase === "inhale" ? "text-sky-400" : breathPhase === "hold" ? "text-purple-400" : "text-emerald-400"
-                        }`}>
-                          {breathPhase === "inhale" ? "Breathe In" : breathPhase === "hold" ? "Hold" : "Breathe Out"}
+                        <p className="text-4xl font-bold text-white font-mono">
+                          {breathTimer}
+                        </p>
+                        <p
+                          className={`text-sm font-semibold mt-1 ${
+                            breathPhase === "inhale"
+                              ? "text-sky-400"
+                              : breathPhase === "hold"
+                                ? "text-purple-400"
+                                : "text-emerald-400"
+                          }`}
+                        >
+                          {breathPhase === "inhale"
+                            ? "Breathe In"
+                            : breathPhase === "hold"
+                              ? "Hold"
+                              : "Breathe Out"}
                         </p>
                       </div>
                     </div>
@@ -1538,14 +1999,17 @@ export default function Player() {
                     {breathPhase === "inhale"
                       ? "Inhale slowly through your nose... fill your lungs completely"
                       : breathPhase === "hold"
-                      ? "Hold gently... feel the stillness within"
-                      : "Exhale slowly through your mouth... release everything"}
+                        ? "Hold gently... feel the stillness within"
+                        : "Exhale slowly through your mouth... release everything"}
                   </p>
                 </div>
               )}
 
               {prepStep === 2 && (
-                <div className="space-y-8 animate-in fade-in duration-700" data-testid="prep-relaxation">
+                <div
+                  className="space-y-8 animate-in fade-in duration-700"
+                  data-testid="prep-relaxation"
+                >
                   <div className="space-y-2">
                     <Sparkles className="h-6 w-6 text-purple-400 mx-auto" />
                     <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white">
@@ -1560,10 +2024,15 @@ export default function Player() {
                     <div className="h-1 bg-white/10 rounded-full mb-6">
                       <div
                         className="h-1 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-1000"
-                        style={{ width: `${((relaxationIndex + 1) / relaxationBodyParts.length) * 100}%` }}
+                        style={{
+                          width: `${((relaxationIndex + 1) / relaxationBodyParts.length) * 100}%`,
+                        }}
                       />
                     </div>
-                    <p className="text-lg text-white/90 font-serif italic leading-relaxed min-h-[80px]" data-testid="text-relaxation">
+                    <p
+                      className="text-lg text-white/90 font-serif italic leading-relaxed min-h-[80px]"
+                      data-testid="text-relaxation"
+                    >
                       {relaxationBodyParts[relaxationIndex]}
                     </p>
                   </div>
@@ -1576,7 +2045,10 @@ export default function Player() {
               )}
 
               {prepStep === 3 && (
-                <div className="space-y-8 animate-in fade-in duration-700" data-testid="prep-countdown">
+                <div
+                  className="space-y-8 animate-in fade-in duration-700"
+                  data-testid="prep-countdown"
+                >
                   <div className="space-y-2">
                     <h2 className="font-serif text-xl text-white/60">
                       Entering Theta State
@@ -1587,14 +2059,20 @@ export default function Player() {
                     <div className="relative">
                       <div className="absolute inset-0 rounded-full bg-gradient-to-br from-purple-500/20 to-amber-500/20 animate-pulse blur-xl scale-150" />
                       <div className="relative w-40 h-40 rounded-full bg-gradient-to-br from-purple-500/10 to-amber-500/10 border border-white/10 flex items-center justify-center">
-                        <span className="text-7xl font-bold text-white font-mono" data-testid="text-countdown-number">
+                        <span
+                          className="text-7xl font-bold text-white font-mono"
+                          data-testid="text-countdown-number"
+                        >
                           {countdownNumber}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <p className="text-base text-white/80 font-serif italic leading-relaxed max-w-md mx-auto min-h-[60px]" data-testid="text-countdown-story">
+                  <p
+                    className="text-base text-white/80 font-serif italic leading-relaxed max-w-md mx-auto min-h-[60px]"
+                    data-testid="text-countdown-story"
+                  >
                     {countdownText}
                   </p>
 
@@ -1630,12 +2108,16 @@ export default function Player() {
               </div>
 
               <div className="space-y-3">
-                <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white" data-testid="text-complete-title">
+                <h2
+                  className="font-serif text-2xl sm:text-3xl font-bold text-white"
+                  data-testid="text-complete-title"
+                >
                   Session Complete
                 </h2>
                 <p className="text-base text-white/70 leading-relaxed max-w-md mx-auto">
-                  Beautiful work. Every time you watch your vision movie, you're retraining your subconscious mind
-                  to align with your deepest goals.
+                  Beautiful work. Every time you watch your vision movie, you're
+                  retraining your subconscious mind to align with your deepest
+                  goals.
                 </p>
               </div>
 
@@ -1649,10 +2131,13 @@ export default function Player() {
                       <Sun className="h-4 w-4 text-amber-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-white">Morning — Right After Waking</p>
+                      <p className="text-sm font-medium text-white">
+                        Morning — Right After Waking
+                      </p>
                       <p className="text-xs text-white/50">
-                        Your subconscious is most receptive in the first minutes after sleep.
-                        Watch your movie before checking your phone or starting your day.
+                        Your subconscious is most receptive in the first minutes
+                        after sleep. Watch your movie before checking your phone
+                        or starting your day.
                       </p>
                     </div>
                   </div>
@@ -1661,10 +2146,13 @@ export default function Player() {
                       <Moon className="h-4 w-4 text-indigo-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-white">Night — Just Before Sleep</p>
+                      <p className="text-sm font-medium text-white">
+                        Night — Just Before Sleep
+                      </p>
                       <p className="text-xs text-white/50">
-                        As you drift off, your brain naturally enters theta state.
-                        Your vision movie's affirmations become the last thoughts your subconscious processes.
+                        As you drift off, your brain naturally enters theta
+                        state. Your vision movie's affirmations become the last
+                        thoughts your subconscious processes.
                       </p>
                     </div>
                   </div>
@@ -1673,36 +2161,88 @@ export default function Player() {
                       <RefreshCw className="h-4 w-4 text-purple-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-white">Consistency Is Everything</p>
+                      <p className="text-sm font-medium text-white">
+                        Consistency Is Everything
+                      </p>
                       <p className="text-xs text-white/50">
-                        Daily repetition rewires neural pathways. Most users report noticeable
-                        shifts in beliefs and behavior within 21 days of consistent use.
+                        Daily repetition rewires neural pathways. Most users
+                        report noticeable shifts in beliefs and behavior within
+                        21 days of consistent use.
                       </p>
                     </div>
                   </div>
                 </div>
               </Card>
 
-              <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
-                <Button
-                  onClick={startAssembly}
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shadow-lg shadow-purple-500/20"
-                  size="lg"
-                  data-testid="button-replay-movie"
-                >
-                  <Play className="mr-2 h-5 w-5" />
-                  Play Again
-                </Button>
-                <Link href="/kits">
-                  <Button variant="outline" size="lg" className="border-white/20 text-white hover:bg-white/10" data-testid="button-browse-kits">
-                    Browse More Kits
+              {!hasUnlockedReplay ? (
+                <div className="premium-border rounded-xl">
+                  <Card className="bg-black/70 backdrop-blur-xl border-0 rounded-xl p-6 space-y-5">
+                    <div className="flex items-center justify-center gap-2">
+                      <Crown className="h-6 w-6 text-amber-400" />
+                      <h3 className="font-serif font-bold text-lg text-white">
+                        Unlock Unlimited Replays
+                      </h3>
+                    </div>
+                    <p className="text-sm text-white/60 leading-relaxed text-center">
+                      Purchase this kit to save your personalized vision movie,
+                      replay it anytime, and access all {totalAffirmations}{" "}
+                      affirmations with your custom voice recordings.
+                    </p>
+                    <div className="flex items-center justify-center gap-2 text-xs text-white/40">
+                      <Lock className="h-3 w-3" />
+                      <span>Secure checkout via Stripe</span>
+                    </div>
+                    <Button
+                      onClick={handleUnlockReplay}
+                      disabled={isCheckingOut}
+                      className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-bold shadow-lg shadow-amber-500/25"
+                      size="lg"
+                      data-testid="button-unlock-replay"
+                    >
+                      {isCheckingOut ? (
+                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      ) : (
+                        <CreditCard className="mr-2 h-5 w-5" />
+                      )}
+                      Save & Unlock — ${((kit.price || 2997) / 100).toFixed(2)}
+                    </Button>
+                    <button
+                      onClick={() => setHasUnlockedReplay(true)}
+                      className="block mx-auto text-xs text-white/30 hover:text-white/50 transition-colors"
+                      data-testid="button-skip-purchase"
+                    >
+                      Continue without saving
+                    </button>
+                  </Card>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
+                  <Button
+                    onClick={startAssembly}
+                    className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shadow-lg shadow-purple-500/20"
+                    size="lg"
+                    data-testid="button-replay-movie"
+                  >
+                    <Play className="mr-2 h-5 w-5" />
+                    Play Again
                   </Button>
-                </Link>
-              </div>
+                  <Link href="/kits">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="border-white/20 text-white hover:bg-white/10"
+                      data-testid="button-browse-kits"
+                    >
+                      Browse More Kits
+                    </Button>
+                  </Link>
+                </div>
+              )}
 
               <p className="text-xs text-white/40 max-w-sm mx-auto">
-                Use headphones for the full theta binaural beat effect.
-                The {kit.frequencyHz} Hz Solfeggio frequency works best when heard through stereo audio.
+                Use headphones for the full theta binaural beat effect. The{" "}
+                {kit.frequencyHz} Hz Solfeggio frequency works best when heard
+                through stereo audio.
               </p>
             </div>
           </div>
@@ -1739,7 +2279,10 @@ export default function Player() {
 
           <div className="relative flex flex-col items-center justify-center h-full min-h-[60vh] px-4">
             <div className="text-center space-y-6 max-w-2xl">
-              <p className="text-3xl sm:text-4xl lg:text-5xl font-serif font-bold text-white leading-tight drop-shadow-lg" data-testid="text-playback-affirmation">
+              <p
+                className="text-3xl sm:text-4xl lg:text-5xl font-serif font-bold text-white leading-tight drop-shadow-lg"
+                data-testid="text-playback-affirmation"
+              >
                 {currentAffirmation?.text}
               </p>
               <div className="flex items-center gap-1 justify-center">
@@ -1755,7 +2298,8 @@ export default function Player() {
               <Progress value={playbackProgress} className="h-1.5" />
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <span className="font-mono text-xs text-white/70">
-                  {formatTime(playbackElapsed)} / {formatTime(kit.duration * 60)}
+                  {formatTime(playbackElapsed)} /{" "}
+                  {formatTime(kit.duration * 60)}
                 </span>
                 <div className="flex items-center gap-3 flex-wrap">
                   {uploadedSong && (
