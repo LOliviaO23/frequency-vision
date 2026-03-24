@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AudioProvider } from "@/contexts/audio-context";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { HelpBot } from "@/components/help-bot";
@@ -15,6 +16,7 @@ import Player from "@/pages/player";
 import HowItWorks from "@/pages/how-it-works";
 import CheckoutSuccess from "@/pages/checkout-success";
 import VisionBoard from "@/pages/vision-board";
+import VRPlayer from "@/pages/vr-player";
 
 function Router() {
   return (
@@ -24,6 +26,7 @@ function Router() {
       <Route path="/kits/:id" component={KitDetail} />
       <Route path="/player/:id" component={Player} />
       <Route path="/vision-board/:id" component={VisionBoard} />
+      <Route path="/vr/:id" component={VRPlayer} />
       <Route path="/how-it-works" component={HowItWorks} />
       <Route path="/checkout/success" component={CheckoutSuccess} />
       <Route component={NotFound} />
@@ -34,19 +37,21 @@ function Router() {
 function App() {
   return (
     <ThemeProvider defaultTheme="dark">
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <div className="flex flex-col min-h-screen">
-            <Header />
-            <main className="flex-1">
-              <Router />
-            </main>
-            <Footer />
-          </div>
-          <Toaster />
-          <HelpBot />
-        </TooltipProvider>
-      </QueryClientProvider>
+      <AudioProvider>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <div className="flex flex-col min-h-screen">
+              <Header />
+              <main className="flex-1">
+                <Router />
+              </main>
+              <Footer />
+            </div>
+            <Toaster />
+            <HelpBot />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </AudioProvider>
     </ThemeProvider>
   );
 }
