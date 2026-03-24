@@ -18,15 +18,27 @@ import {
   Brain,
   Zap,
   Images,
+  Star,
+  Calendar,
+  Gift,
+  Infinity,
+  Crown,
+  Glasses,
 } from "lucide-react";
 import { useState } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { FrequencyPreviewCard } from "@/components/frequency-preview-card";
+
+const ORIGINAL_PRICE_CENTS = 12000;
 
 export default function KitDetail() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
   const [purchasing, setPurchasing] = useState(false);
+  const [subscribing, setSubscribing] = useState(false);
+  const [lifetiming, setLifetiming] = useState(false);
+  const [vrUpgrading, setVrUpgrading] = useState(false);
 
   const { data: kit, isLoading: kitLoading } = useQuery<Kit>({
     queryKey: ["/api/kits", id],
@@ -58,6 +70,67 @@ export default function KitDetail() {
       });
     } finally {
       setPurchasing(false);
+    }
+  };
+
+  const handleSubscribe = async () => {
+    setSubscribing(true);
+    try {
+      const res = await apiRequest("POST", "/api/checkout/subscription", { email: "" });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err: any) {
+      toast({
+        title: "Subscription Error",
+        description: err.message || "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setSubscribing(false);
+    }
+  };
+
+  const handleLifetime = async () => {
+    setLifetiming(true);
+    try {
+      const res = await apiRequest("POST", "/api/checkout/lifetime", { email: "" });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err: any) {
+      toast({
+        title: "Checkout Error",
+        description: err.message || "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setLifetiming(false);
+    }
+  };
+
+  const handleVrUpgrade = async () => {
+    if (!kit) return;
+    setVrUpgrading(true);
+    try {
+      const res = await apiRequest("POST", "/api/checkout/vr-upgrade", {
+        kitId: kit.id,
+        email: "",
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err: any) {
+      toast({
+        title: "Checkout Error",
+        description: err.message || "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setVrUpgrading(false);
     }
   };
 
@@ -147,25 +220,14 @@ export default function KitDetail() {
 
             <div className="space-y-3">
               <h2 className="font-serif font-bold text-xl">Frequency Details</h2>
-              <Card className="relative overflow-hidden p-0">
-                <div className="h-1 bg-gradient-to-r from-purple-500 to-pink-500" />
-                <div className="p-5">
-                  <div className="flex items-start gap-4">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/10">
-                      <Volume2 className="h-6 w-6 text-purple-400" />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-bold text-purple-300">{kit.frequencyHz} Hz</span>
-                        <span className="text-sm text-muted-foreground">{kit.frequencyType}</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground leading-relaxed">
-                        {kit.frequencyDescription}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </Card>
+              <FrequencyPreviewCard
+                hz={kit.frequencyHz}
+                name={kit.frequencyType}
+                color="from-purple-500/10 to-pink-500/5"
+              />
+              <p className="text-sm text-muted-foreground leading-relaxed px-1">
+                {kit.frequencyDescription}
+              </p>
             </div>
 
             <div className="relative overflow-hidden rounded-xl">
@@ -213,14 +275,26 @@ export default function KitDetail() {
           </div>
 
           <div className="space-y-4">
-            <Card className="relative overflow-hidden p-0 sticky top-20">
+            {/* Single Kit Purchase Card */}
+            <Card className="relative overflow-hidden p-0 sticky top-20" data-testid="card-single-kit">
               <div className="h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-amber-500" />
               <div className="p-6 space-y-5">
-                <div className="space-y-1">
-                  <span className="text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent" data-testid="text-kit-price">
-                    ${(kit.price / 100).toFixed(2)}
-                  </span>
-                  <p className="text-sm text-muted-foreground">One-time purchase, unlimited use</p>
+                {/* Promo pricing */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-xs font-bold no-default-hover-elevate no-default-active-elevate" data-testid="badge-promo-discount">
+                      50% OFF — LIMITED TIME
+                    </Badge>
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent" data-testid="text-kit-price">
+                      ${(kit.price / 100).toFixed(0)}
+                    </span>
+                    <span className="text-lg text-muted-foreground line-through" data-testid="text-kit-original-price">
+                      ${(ORIGINAL_PRICE_CENTS / 100).toFixed(0)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">One-time purchase · unlimited replays</p>
                 </div>
 
                 <div className="space-y-3">
@@ -253,7 +327,7 @@ export default function KitDetail() {
                   ) : (
                     <>
                       <ShoppingCart className="mr-2 h-4 w-4" />
-                      Purchase Kit
+                      Get This Kit — $60
                     </>
                   )}
                 </Button>
@@ -281,6 +355,190 @@ export default function KitDetail() {
                 </div>
               </div>
             </Card>
+
+            {/* Annual Subscription Card */}
+            <Card className="relative overflow-hidden p-0 border-amber-500/30" data-testid="card-annual-subscription">
+              <div className="h-1 bg-gradient-to-r from-amber-400 via-orange-400 to-yellow-400" />
+              <div className="p-5 space-y-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
+                      <span className="text-xs font-bold text-amber-400 tracking-wider">BEST VALUE</span>
+                    </div>
+                    <h3 className="font-serif font-bold text-base">Annual Pass</h3>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-3xl font-bold" data-testid="text-subscription-price">$299</span>
+                      <span className="text-sm text-muted-foreground">/year</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-2 text-center min-w-[52px]">
+                    <p className="text-xl font-bold text-amber-400">4</p>
+                    <p className="text-[10px] text-amber-400/70 leading-tight">kits</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {[
+                    { icon: Gift, text: "Access any 4 kits throughout the year" },
+                    { icon: Calendar, text: "Build at your own pace — no rush" },
+                    { icon: Sparkles, text: "Each kit fully personalized with your voice" },
+                  ].map(({ icon: Icon, text }, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <Icon className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                      <span className="text-sm text-muted-foreground">{text}</span>
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground pl-6">
+                    That's just $74.75 per kit — vs $120 each individually.
+                  </p>
+                </div>
+
+                <Button
+                  className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 border-0 text-black font-semibold shadow-lg shadow-amber-500/20"
+                  size="lg"
+                  onClick={handleSubscribe}
+                  disabled={subscribing}
+                  data-testid="button-subscribe-annual"
+                >
+                  {subscribing ? (
+                    "Processing..."
+                  ) : (
+                    <>
+                      <Star className="mr-2 h-4 w-4 fill-black" />
+                      Get Annual Pass — $299/yr
+                    </>
+                  )}
+                </Button>
+              </div>
+            </Card>
+
+            {/* Lifetime Access Card */}
+            <Card className="relative overflow-hidden p-0 border-violet-500/40" data-testid="card-lifetime-access">
+              <div className="h-1 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-purple-400" />
+              <div className="p-5 space-y-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Crown className="h-4 w-4 text-violet-400 fill-violet-400" />
+                      <span className="text-xs font-bold text-violet-400 tracking-wider">LIMITED OFFER</span>
+                    </div>
+                    <h3 className="font-serif font-bold text-base">Lifetime Access</h3>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-3xl font-bold" data-testid="text-lifetime-price">$599</span>
+                      <span className="text-sm text-muted-foreground">one-time</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-violet-500/10 border border-violet-500/20 p-2 text-center min-w-[52px]">
+                    <Infinity className="h-5 w-5 text-violet-400 mx-auto" />
+                    <p className="text-[10px] text-violet-400/70 leading-tight mt-0.5">forever</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {[
+                    { icon: Infinity, text: "Unlimited kits — all categories, forever" },
+                    { icon: Sparkles, text: "Every new kit we release, included free" },
+                    { icon: Crown, text: "Never pay again — one and done" },
+                  ].map(({ icon: Icon, text }, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <Icon className="h-4 w-4 shrink-0 text-violet-400 mt-0.5" />
+                      <span className="text-sm text-muted-foreground">{text}</span>
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground pl-6">
+                    Pay once. Transform your mind for life.
+                  </p>
+                </div>
+
+                <Button
+                  className="w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 border-0 font-semibold shadow-lg shadow-violet-500/20"
+                  size="lg"
+                  onClick={handleLifetime}
+                  disabled={lifetiming}
+                  data-testid="button-lifetime-access"
+                >
+                  {lifetiming ? (
+                    "Processing..."
+                  ) : (
+                    <>
+                      <Crown className="mr-2 h-4 w-4" />
+                      Get Lifetime Access — $599
+                    </>
+                  )}
+                </Button>
+              </div>
+            </Card>
+
+            {/* VR Upgrade Card */}
+            <Card className="relative overflow-hidden p-0 border-cyan-500/30" data-testid="card-vr-upgrade">
+              <div className="h-1 bg-gradient-to-r from-cyan-500 via-teal-400 to-blue-500" />
+              <div className="p-5 space-y-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Glasses className="h-4 w-4 text-cyan-400" />
+                      <span className="text-xs font-bold text-cyan-400 tracking-wider">ADD-ON</span>
+                    </div>
+                    <h3 className="font-serif font-bold text-base">VR Upgrade</h3>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-3xl font-bold" data-testid="text-vr-price">$29</span>
+                      <span className="text-sm text-muted-foreground">one-time</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-cyan-500/10 border border-cyan-500/20 p-2 text-center min-w-[52px]">
+                    <Glasses className="h-5 w-5 text-cyan-400 mx-auto" />
+                    <p className="text-[10px] text-cyan-400/70 leading-tight mt-0.5">360°</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {[
+                    { icon: Sparkles, text: "Immersive 360° galaxy environment" },
+                    { icon: Waves, text: "Affirmations float in 3D space around you" },
+                    { icon: Zap, text: "Works with Meta Quest, Cardboard & desktop" },
+                  ].map(({ icon: Icon, text }, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <Icon className="h-4 w-4 shrink-0 text-cyan-400 mt-0.5" />
+                      <span className="text-sm text-muted-foreground">{text}</span>
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground pl-6">
+                    No app download — works in any browser.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Button
+                    className="w-full bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 border-0 font-semibold shadow-lg shadow-cyan-500/20"
+                    size="lg"
+                    onClick={handleVrUpgrade}
+                    disabled={vrUpgrading}
+                    data-testid="button-vr-upgrade"
+                  >
+                    {vrUpgrading ? (
+                      "Processing..."
+                    ) : (
+                      <>
+                        <Glasses className="mr-2 h-4 w-4" />
+                        Unlock VR — $29
+                      </>
+                    )}
+                  </Button>
+                  <Link href={`/vr/${kit?.id}`}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-cyan-400/70 hover:text-cyan-400 hover:bg-cyan-500/10 text-xs"
+                      data-testid="button-preview-vr"
+                    >
+                      Preview VR Experience →
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </Card>
+
           </div>
         </div>
       </div>
