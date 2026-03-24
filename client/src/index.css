@@ -329,3 +329,49 @@
   border-radius: inherit;
   background: hsl(var(--background));
 }
+
+/* ── Ken Burns animated visual clip system ──────────────────────────────── */
+@keyframes kb-zoom-in {
+  from { transform: scale(1)    translate(0%,    0%);   }
+  to   { transform: scale(1.14) translate(-2.5%, -1.5%); }
+}
+@keyframes kb-zoom-out {
+  from { transform: scale(1.14) translate(2.5%,  1.5%); }
+  to   { transform: scale(1)    translate(0%,    0%);   }
+}
+@keyframes kb-pan-right {
+  from { transform: scale(1.08) translate(-3.5%, 0%); }
+  to   { transform: scale(1.08) translate(3.5%,  0%); }
+}
+@keyframes kb-pan-left {
+  from { transform: scale(1.08) translate(3.5%,  0%); }
+  to   { transform: scale(1.08) translate(-3.5%, 0%); }
+}
+@keyframes kb-drift-up {
+  from { transform: scale(1.1) translate(1.5%,  3%);  }
+  to   { transform: scale(1.1) translate(-1.5%, -3%); }
+}
+@keyframes kb-drift-diag {
+  from { transform: scale(1)    translate(-2%, 2%);  }
+  to   { transform: scale(1.12) translate(2%,  -2%); }
+}
+
+.visual-clip-1 { animation: kb-zoom-in    13s ease-in-out infinite alternate; }
+.visual-clip-2 { animation: kb-zoom-out   15s ease-in-out infinite alternate; }
+.visual-clip-3 { animation: kb-pan-right  11s ease-in-out infinite alternate; }
+.visual-clip-4 { animation: kb-pan-left   14s ease-in-out infinite alternate; }
+.visual-clip-5 { animation: kb-drift-up   12s ease-in-out infinite alternate; }
+.visual-clip-6 { animation: kb-drift-diag 16s ease-in-out infinite alternate; }
+
+.visual-clip-bg { animation: kb-zoom-in 20s ease-in-out infinite alternate; }
+
+.visual-thumb-preview {
+  overflow: hidden;
+}
+.visual-thumb-preview img {
+  transition: transform 3s ease-out;
+  transform-origin: center center;
+}
+.visual-thumb-preview:hover img {
+  transform: scale(1.1) translate(2%, 1%);
+}
