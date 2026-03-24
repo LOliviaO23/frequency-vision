@@ -18,7 +18,8 @@ A web application for selling digital movie kits that combine theta binaural bea
 client/src/
   pages/         - Home, Kits, KitDetail, Player, HowItWorks, CheckoutSuccess, VisionBoard
   components/    - Header, Footer, KitCard, HelpBot, ThemeProvider, ThemeToggle
-  hooks/         - useFrequency (stereo binaural beats), useVoiceRecorder (MediaRecorder)
+  contexts/      - AudioProvider (centralized Web Audio engine: binaural beats, solfeggio, song ducking, voice crossfade)
+  hooks/         - useFrequency (standalone preview only), useVoiceRecorder (MediaRecorder)
   lib/           - queryClient
 
 server/
@@ -50,22 +51,23 @@ shared/
 9. **Stripe Checkout** - Payment processing for kit purchases
 10. **Dark/Light Mode** - Theme toggle with localStorage persistence
 
-## Player 6-Phase Flow
+## Player 7-Phase Flow
 1. **BUILD** - Browse 40 affirmations and 10 category visuals; select at least 5 affirmations and 3 visuals; upload favorite song
 2. **RECORD** - Record selected affirmations in your own voice; inline mic button next to each affirmation; "Complete My Movie" button appears when all recorded
-3. **ASSEMBLING** - Cinematic assembly screen with animated rotating gradient border (premium-border CSS), animated progress through 7 steps; auto-transitions to preparation
-4. **PREPARATION** - Guided 4-step trance induction:
+3. **ASSEMBLING** - Cinematic assembly screen with animated rotating gradient border (premium-border CSS), animated progress through 7 steps; auto-transitions to preflight
+4. **PREFLIGHT** - Headphone pre-flight check: sends 440 Hz sine pulse to left channel then right channel via Web Audio API ChannelMerger; user confirms each ear heard the tone; "Skip Check" option available; verifies stereo hardware before binaural beat playback
+5. **PREPARATION** - Guided 4-step trance induction:
    - Step 0: Vagus Nerve Reset (diaphragmatic breathing, extended exhale, humming)
    - Step 1: 7-4-7 Breathing (animated circle, 3 cycles: inhale 7s, hold 4s, exhale 7s)
    - Step 2: Silva Deep Relaxation (progressive body scan, theta beats start)
    - Step 3: Visualization Trance Induction (staircase countdown 10→1, guided imagery)
    - "Skip to Movie" button available throughout
-5. **PLAYBACK** - Vision movie plays with:
+6. **PLAYBACK** - Vision movie plays with:
    - Cycling selected visuals as backgrounds (20s intervals, crossfade)
    - Recorded affirmations crossfade between each other (300ms fade-in/out, no pops)
    - Uploaded song routed through Web Audio API GainNode for smooth ducking (0.3s ramp)
    - Theta binaural beats subliminal underneath
-6. **SESSION COMPLETE** - Post-playback with daily usage guidance; Stripe "Save & Unlock" premium CTA with animated gradient border before replay access; "Continue without saving" bypass link; browse more kits option
+7. **SESSION COMPLETE** - Post-playback with daily usage guidance; Stripe "Save & Unlock" premium CTA with animated gradient border before replay access; "Continue without saving" bypass link; browse more kits option
 
 ## Audio Architecture (Player)
 Three simultaneous audio layers during playback with sidechain ducking:
@@ -79,21 +81,21 @@ Three simultaneous audio layers during playback with sidechain ducking:
 Three professional DSP layers processed via Web Audio API OfflineAudioContext:
 
 ### Layer 1: Voice EQ
-- **Pitch Shift** - Playback rate 0.88x for deeper, authoritative voice
+- **Pitch Shift** - Playback rate 0.95x (5% tempo reduction) — subtle cadence slowdown that preserves voice identity
 - **Sub Rumble Filter** - Highpass at 60 Hz removes mic rumble before processing
-- **Warmth Filter** - Low-shelf at 150 Hz, +4 dB adds warmth and authority
-- **Clarity Filter** - Peaking filter at 3 kHz, -2 dB, Q=1.4 softens sibilance for hypnotic quality
+- **Warmth Filter** - Low-shelf at 180 Hz, +2.5 dB adds gentle warmth without muddiness
+- **Clarity Filter** - Peaking filter at 3.5 kHz, -1.5 dB, Q=1.2 softens harshness for a soothing tone
 
-### Layer 2: Large Hall Spatial Reverb
-- **Pre-Delay** - 20ms gap before reverb onset for source clarity
-- **Early Reflections** - 6 discrete reflections (12-63ms) with stereo offset for spatial width
-- **Late Diffusion** - Exponential + linear decay (2.5s), modulated noise for organic hall character
-- **Stereo Decorrelation** - 7ms delay offset on right channel for immersive spatial spread
-- **Damping** - Lowpass at 8 kHz on wet signal simulates air absorption in large spaces
-- **Wet Mix** - 10% blend for dream-state presence without washing out clarity
+### Layer 2: Room Spatial Reverb (subtle)
+- **Pre-Delay** - 12ms gap before reverb onset for source clarity
+- **Early Reflections** - 4 discrete reflections (10-32ms) with stereo offset for natural space
+- **Late Diffusion** - Exponential + linear decay (1.2s), modulated noise for organic room character
+- **Stereo Decorrelation** - 7ms delay offset on right channel for gentle spatial spread
+- **Damping** - Lowpass at 8 kHz on wet signal
+- **Wet Mix** - 4% blend — barely perceptible room presence, voice identity preserved
 
 ### Layer 3: Output Chain
-- **Compressor** - Threshold -24 dB, ratio 4:1, 3ms attack, 150ms release for perfectly smooth dynamics
+- **Compressor** - Threshold -18 dB, ratio 3:1, 5ms attack, 200ms release for smooth, even dynamics
 - **Output Limiter** - Brick-wall at -1 dB (ratio 20:1) prevents clipping
 - Output encoded as stereo WAV blob; both original and processed versions stored per affirmation
 
@@ -103,7 +105,12 @@ Three professional DSP layers processed via Web Audio API OfflineAudioContext:
 - GET /api/kits/:id/affirmations - Get affirmations for a kit (40 per kit)
 - GET /api/kits/:id/vision-board - Get vision board images for a kit (50 per kit)
 - GET /api/visuals/:category - Get visual images for a category (10 per category)
-- POST /api/checkout - Create Stripe checkout session
+- POST /api/checkout - Create Stripe checkout session for a single kit ($120)
+- POST /api/checkout/subscription - Create Stripe subscription checkout ($299/year, 4 kits)
+- POST /api/checkout/lifetime - Create Stripe one-time checkout for lifetime access ($599, unlimited kits forever)
+- POST /api/checkout/vr-upgrade - Create Stripe one-time checkout for VR upgrade ($29 per kit add-on)
+- POST /api/subscription/record - Called after subscription/lifetime checkout success; records subscription in fv_subscriptions table; sessionId stored in localStorage as access token
+- GET /api/subscription/check?sessionId=xxx - Validates subscription in real-time against Stripe API; returns { active, plan, expiresAt }; auto-updates DB status on change
 - POST /api/helpbot - AI chat endpoint (SSE streaming)
 - GET /api/orders/verify - Verify order status
 - GET /api/stripe/publishable-key - Get Stripe publishable key
