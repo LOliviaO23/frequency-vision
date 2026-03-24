@@ -1,4 +1,4 @@
-import { type Kit, type InsertKit, type Affirmation, type InsertAffirmation, type Order, type InsertOrder, type KitVisual, type InsertKitVisual, type VisionBoardImage, type InsertVisionBoardImage, kits, affirmations, orders, kitVisuals, visionBoardImages } from "@shared/schema";
+import { type Kit, type InsertKit, type Affirmation, type InsertAffirmation, type Order, type InsertOrder, type KitVisual, type InsertKitVisual, type VisionBoardImage, type InsertVisionBoardImage, type Subscription, type InsertSubscription, kits, affirmations, orders, kitVisuals, visionBoardImages, fvSubscriptions } from "@shared/schema";
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 
@@ -30,6 +30,11 @@ export interface IStorage {
   getKitCount(): Promise<number>;
   getAffirmationCount(): Promise<number>;
   clearAllKitsAndAffirmations(): Promise<void>;
+
+  getSubscriptionBySessionId(sessionId: string): Promise<Subscription | undefined>;
+  getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
+  createSubscription(sub: InsertSubscription): Promise<Subscription>;
+  updateSubscription(id: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -134,6 +139,26 @@ export class DatabaseStorage implements IStorage {
   async clearAllKitsAndAffirmations(): Promise<void> {
     await db.delete(affirmations);
     await db.delete(kits);
+  }
+
+  async getSubscriptionBySessionId(sessionId: string): Promise<Subscription | undefined> {
+    const [sub] = await db.select().from(fvSubscriptions).where(eq(fvSubscriptions.sessionId, sessionId));
+    return sub;
+  }
+
+  async getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined> {
+    const [sub] = await db.select().from(fvSubscriptions).where(eq(fvSubscriptions.stripeSubscriptionId, stripeSubscriptionId));
+    return sub;
+  }
+
+  async createSubscription(sub: InsertSubscription): Promise<Subscription> {
+    const [created] = await db.insert(fvSubscriptions).values(sub).returning();
+    return created;
+  }
+
+  async updateSubscription(id: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined> {
+    const [updated] = await db.update(fvSubscriptions).set(data).where(eq(fvSubscriptions.id, id)).returning();
+    return updated;
   }
 }
 
