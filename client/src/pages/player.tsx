@@ -41,9 +41,10 @@ import {
   Crown,
   Save,
   CreditCard,
+  Star,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useFrequency } from "@/hooks/use-frequency";
+import { useAudio } from "@/contexts/audio-context";
 import {
   useVoiceRecorder,
   type RecordingData,
@@ -55,9 +56,12 @@ type PlayerMode =
   | "build"
   | "record"
   | "assembling"
+  | "preflight"
   | "preparation"
   | "playback"
   | "complete";
+
+type PreflightStatus = "idle" | "left" | "right" | "passed" | "failed";
 
 interface ProcessedRecording extends RecordingData {
   processedUrl: string;
@@ -68,20 +72,19 @@ export default function Player() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
 
-  const { data: kit, isLoading: kitLoading } = useQuery<Kit>({
-    queryKey: ["/api/kits", id],
+  const { data: fullKit, isLoading: kitLoading } = useQuery<{
+    kit: Kit;
+    affirmations: Affirmation[];
+    visuals: KitVisual[];
+  }>({
+    queryKey: ["/api/full-kit", id],
+    staleTime: 60000,
   });
 
-  const { data: affirmations, isLoading: affLoading } = useQuery<Affirmation[]>(
-    {
-      queryKey: ["/api/kits", id, "affirmations"],
-    },
-  );
-
-  const { data: visuals } = useQuery<KitVisual[]>({
-    queryKey: ["/api/visuals", kit?.category],
-    enabled: !!kit?.category,
-  });
+  const kit = fullKit?.kit;
+  const affirmations = fullKit?.affirmations;
+  const visuals = fullKit?.visuals;
+  const affLoading = kitLoading;
 
   const [mode, setMode] = useState<PlayerMode>("build");
   const [recordings, setRecordings] = useState<Map<string, ProcessedRecording>>(
@@ -124,28 +127,60 @@ export default function Player() {
   const [countdownNumber, setCountdownNumber] = useState(10);
   const [countdownText, setCountdownText] = useState("");
 
+  const [preflightStatus, setPreflightStatus] = useState<PreflightStatus>("idle");
+  const [preflightPlayedLeft, setPreflightPlayedLeft] = useState(false);
+  const [preflightPlayedRight, setPreflightPlayedRight] = useState(false);
+  const [preflightConfirmedLeft, setPreflightConfirmedLeft] = useState(false);
+  const [preflightConfirmedRight, setPreflightConfirmedRight] = useState(false);
+  const preflightCtxRef = useRef<AudioContext | null>(null);
+  const preflightCancelledRef = useRef(false);
+
   const [hasUnlockedReplay, setHasUnlockedReplay] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
-  const frequency = useFrequency();
+  const storedSubscriptionSessionId = typeof window !== "undefined"
+    ? localStorage.getItem("fv_subscription_session") || ""
+    : "";
+
+  const { data: subscriptionStatus } = useQuery<{
+    active: boolean;
+    plan?: string;
+    expiresAt?: string;
+    reason?: string;
+  }>({
+    queryKey: ["/api/subscription/check", storedSubscriptionSessionId],
+    queryFn: async () => {
+      if (!storedSubscriptionSessionId) return { active: false };
+      const res = await fetch(`/api/subscription/check?sessionId=${storedSubscriptionSessionId}`);
+      return res.json();
+    },
+    enabled: !!storedSubscriptionSessionId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const subscriptionActive = subscriptionStatus?.active === true;
+  const subscriptionExpired = !!storedSubscriptionSessionId && subscriptionStatus !== undefined && !subscriptionActive;
+
+  const {
+    state: audioState,
+    playAffirmation,
+    updateBackgroundMusic,
+    startFrequency,
+    stopFrequency,
+    setVolume: setAudioVolume,
+    setMuted: setAudioMuted,
+    stopAll: stopAllAudio,
+  } = useAudio();
   const recorder = useVoiceRecorder();
   const voiceProcessor = useVoiceProcessor();
   const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const prevAudioRef = useRef<HTMLAudioElement | null>(null);
-  const songAudioRef = useRef<HTMLAudioElement | null>(null);
-  const songGainNodeRef = useRef<GainNode | null>(null);
-  const songSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
   const songFileInputRef = useRef<HTMLInputElement | null>(null);
   const playbackIndexRef = useRef(0);
-  const visualIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const assemblyTimersRef = useRef<NodeJS.Timeout[]>([]);
   const assemblyCancelledRef = useRef(false);
   const prepTimersRef = useRef<NodeJS.Timeout[]>([]);
   const playbackIntervalsRef = useRef<NodeJS.Timeout[]>([]);
-  const fadeIntervalsRef = useRef<NodeJS.Timeout[]>([]);
   const createdUrlsRef = useRef<Set<string>>(new Set());
 
   const selectedAffirmations = useMemo(
@@ -255,63 +290,57 @@ export default function Player() {
 
   const handleStopRecordingFor = useCallback(
     async (affId: string) => {
+      let rawData: RecordingData | null = null;
       try {
-        const data = await recorder.stopRecording();
+        rawData = await recorder.stopRecording();
         setRecordingAffId(null);
         setProcessingAffId(affId);
 
-        toast({
-          title: "Processing Voice",
-          description: "Optimizing your voice to the ideal hypnotic pitch...",
-        });
-
         try {
-          const processed = await voiceProcessor.processVoice(data.blob);
+          const processed = await voiceProcessor.processVoice(rawData.blob);
 
-          createdUrlsRef.current.add(data.url);
+          createdUrlsRef.current.add(rawData.url);
           createdUrlsRef.current.add(processed.url);
 
-          const processedRecording: ProcessedRecording = {
-            ...data,
-            processedUrl: processed.url,
-            processedBlob: processed.blob,
-          };
-
           setRecordings((prev) => {
             const next = new Map(prev);
-            next.set(affId, processedRecording);
+            next.set(affId, {
+              ...rawData!,
+              processedUrl: processed.url,
+              processedBlob: processed.blob,
+            });
             return next;
           });
 
           toast({
-            title: "Recording Saved",
-            description:
-              "Your voice has been auto-tuned to the perfect trance pitch.",
+            title: "Recording Processed",
+            description: "Hypnotic pitch applied.",
           });
-        } catch {
-          createdUrlsRef.current.add(data.url);
+        } catch (processError) {
+          console.warn("Pitch processing failed, falling back to raw audio:", processError);
 
-          const processedRecording: ProcessedRecording = {
-            ...data,
-            processedUrl: data.url,
-            processedBlob: data.blob,
-          };
+          createdUrlsRef.current.add(rawData.url);
 
           setRecordings((prev) => {
             const next = new Map(prev);
-            next.set(affId, processedRecording);
+            next.set(affId, {
+              ...rawData!,
+              processedUrl: rawData!.url,
+              processedBlob: rawData!.blob,
+            });
             return next;
           });
 
           toast({
-            title: "Recording Saved",
-            description: "Voice saved (pitch processing unavailable).",
+            title: "Note",
+            description: "Recording saved, but hypnotic tuning was skipped.",
+            variant: "default",
           });
         }
       } catch {
         toast({
-          title: "Recording Error",
-          description: "Failed to save recording. Please try again.",
+          title: "Recording Failed",
+          description: "We couldn't access your microphone. Please check permissions.",
           variant: "destructive",
         });
       } finally {
@@ -336,14 +365,14 @@ export default function Player() {
         return;
       }
 
-      const audio = new Audio(useProcessed ? rec.processedUrl : rec.url);
-      previewAudioRef.current = audio;
+      const previewEl = new Audio(useProcessed ? rec.processedUrl : rec.url);
+      previewAudioRef.current = previewEl;
       setPlayingAffId(affId);
-      audio.onended = () => {
+      previewEl.onended = () => {
         setPlayingAffId(null);
         previewAudioRef.current = null;
       };
-      audio.play();
+      previewEl.play();
     },
     [recordings, playingAffId],
   );
@@ -401,6 +430,92 @@ export default function Player() {
     }
   }, [kit, toast]);
 
+  const playPreflightTone = useCallback((channel: "left" | "right"): Promise<void> => {
+    return new Promise((resolve) => {
+      const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new Ctor();
+      preflightCtxRef.current = ctx;
+
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.05);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + 0.4);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+
+      const merger = ctx.createChannelMerger(2);
+      osc.connect(gain);
+      if (channel === "left") {
+        gain.connect(merger, 0, 0);
+        const silence = ctx.createGain();
+        silence.gain.setValueAtTime(0, ctx.currentTime);
+        osc.connect(silence);
+        silence.connect(merger, 0, 1);
+      } else {
+        gain.connect(merger, 0, 1);
+        const silence = ctx.createGain();
+        silence.gain.setValueAtTime(0, ctx.currentTime);
+        osc.connect(silence);
+        silence.connect(merger, 0, 0);
+      }
+      merger.connect(ctx.destination);
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+
+      osc.onended = () => {
+        ctx.close().catch(() => {});
+        preflightCtxRef.current = null;
+        resolve();
+      };
+    });
+  }, []);
+
+  const runPreflightTest = useCallback(async (channel: "left" | "right") => {
+    preflightCancelledRef.current = false;
+    setPreflightStatus(channel);
+    await playPreflightTone(channel);
+    if (preflightCancelledRef.current) return;
+    if (channel === "left") {
+      setPreflightPlayedLeft(true);
+    } else {
+      setPreflightPlayedRight(true);
+    }
+    setPreflightStatus("idle");
+  }, [playPreflightTone]);
+
+  const handlePreflightConfirm = useCallback((channel: "left" | "right") => {
+    if (channel === "left") {
+      setPreflightConfirmedLeft(true);
+    } else {
+      setPreflightConfirmedRight(true);
+    }
+  }, []);
+
+  const startPreparationFromPreflight = useCallback(() => {
+    if (preflightCtxRef.current) {
+      preflightCtxRef.current.close().catch(() => {});
+      preflightCtxRef.current = null;
+    }
+    setPreflightStatus("passed");
+    setMode("preparation");
+    setPrepStep(0);
+  }, []);
+
+  const skipPreflight = useCallback(() => {
+    preflightCancelledRef.current = true;
+    if (preflightCtxRef.current) {
+      preflightCtxRef.current.close().catch(() => {});
+      preflightCtxRef.current = null;
+    }
+    setPreflightStatus("passed");
+    setMode("preparation");
+    setPrepStep(0);
+  }, []);
+
   const clearAssemblyTimers = useCallback(() => {
     assemblyTimersRef.current.forEach(clearTimeout);
     assemblyTimersRef.current = [];
@@ -451,8 +566,13 @@ export default function Player() {
       if (i >= steps.length) {
         const t = setTimeout(() => {
           if (!assemblyCancelledRef.current) {
-            setMode("preparation");
-            setPrepStep(0);
+            setPreflightStatus("idle");
+            setPreflightPlayedLeft(false);
+            setPreflightPlayedRight(false);
+            setPreflightConfirmedLeft(false);
+            setPreflightConfirmedRight(false);
+            preflightCancelledRef.current = false;
+            setMode("preflight");
           }
         }, 500);
         assemblyTimersRef.current.push(t);
@@ -468,85 +588,6 @@ export default function Player() {
     runStep();
   }, [selectedAffirmations, kit, uploadedSong, mode, clearAssemblyTimers]);
 
-  const duckSong = useCallback((duck: boolean) => {
-    const DUCK_DB = 3.5;
-    const DUCK_RATIO = Math.pow(10, -DUCK_DB / 20);
-    const DUCK_RAMP_S = 0.3;
-
-    if (songGainNodeRef.current && audioCtxRef.current) {
-      const ctx = audioCtxRef.current;
-      const gain = songGainNodeRef.current;
-      const target = duck ? songVolume * DUCK_RATIO : songVolume;
-      const safeTarget = songMuted ? 0.0001 : Math.max(0.0001, target);
-      gain.gain.cancelScheduledValues(ctx.currentTime);
-      gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(
-        safeTarget,
-        ctx.currentTime + DUCK_RAMP_S,
-      );
-    }
-
-    if (duck) {
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume * DUCK_RATIO);
-    } else {
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
-    }
-  }, [songVolume, songMuted, frequency, frequencyVolume, frequencyMuted]);
-
-  const clearFadeIntervals = useCallback(() => {
-    fadeIntervalsRef.current.forEach(clearInterval);
-    fadeIntervalsRef.current = [];
-  }, []);
-
-  const crossfadeToAffirmation = useCallback((processedUrl: string) => {
-    const FADE_MS = 300;
-
-    if (audioRef.current) {
-      const outgoing = audioRef.current;
-      prevAudioRef.current = outgoing;
-      const startVol = outgoing.volume;
-      const fadeSteps = 15;
-      const stepTime = FADE_MS / fadeSteps;
-      let step = 0;
-      const fadeOut = setInterval(() => {
-        step++;
-        outgoing.volume = Math.max(0, startVol * (1 - step / fadeSteps));
-        if (step >= fadeSteps) {
-          clearInterval(fadeOut);
-          outgoing.pause();
-          outgoing.removeAttribute("src");
-          prevAudioRef.current = null;
-        }
-      }, stepTime);
-      fadeIntervalsRef.current.push(fadeOut);
-    }
-
-    duckSong(true);
-
-    const audio = new Audio(processedUrl);
-    audio.volume = 0;
-    audioRef.current = audio;
-
-    audio.onended = () => {
-      duckSong(false);
-    };
-
-    audio.play().then(() => {
-      const fadeSteps = 15;
-      const stepTime = FADE_MS / fadeSteps;
-      let step = 0;
-      const fadeIn = setInterval(() => {
-        step++;
-        audio.volume = Math.min(1, step / fadeSteps);
-        if (step >= fadeSteps) {
-          clearInterval(fadeIn);
-        }
-      }, stepTime);
-      fadeIntervalsRef.current.push(fadeIn);
-    }).catch(() => {
-      duckSong(false);
-    });
-  }, [duckSong]);
 
   const startPlayback = useCallback(() => {
     if (!selectedAffirmations.length || !kit) return;
@@ -561,40 +602,17 @@ export default function Player() {
 
     playbackIntervalsRef.current.forEach(clearInterval);
     playbackIntervalsRef.current = [];
-    clearFadeIntervals();
 
-    if (!frequency.isPlaying) {
-      frequency.start(kit.frequencyHz);
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
+    if (!audioState.isFrequencyPlaying) {
+      startFrequency(kit.frequencyHz);
+      setAudioMuted("frequency", frequencyMuted);
+      setAudioVolume("frequency", frequencyVolume);
     }
 
     if (uploadedSong) {
-      const ctx = audioCtxRef.current || new AudioContext();
-      audioCtxRef.current = ctx;
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-
-      const songEl = new Audio(uploadedSong.url);
-      songEl.loop = true;
-      songEl.crossOrigin = "anonymous";
-      songAudioRef.current = songEl;
-
-      if (!songSourceRef.current) {
-        const source = ctx.createMediaElementSource(songEl);
-        const gainNode = ctx.createGain();
-        gainNode.gain.value = songMuted ? 0 : songVolume;
-        source.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        songSourceRef.current = source;
-        songGainNodeRef.current = gainNode;
-      }
-
-      songEl.play().catch(() => {});
-    }
-
-    if (selectedVisuals.length > 1) {
-      visualIntervalRef.current = setInterval(() => {
-        setCurrentVisualIndex((prev) => (prev + 1) % selectedVisuals.length);
-      }, 20000);
+      updateBackgroundMusic(uploadedSong.url);
+      setAudioMuted("music", songMuted);
+      setAudioVolume("music", songVolume);
     }
 
     const totalDuration = kit.duration * 60;
@@ -605,31 +623,23 @@ export default function Player() {
       const idx = playbackIndexRef.current;
       if (idx >= selectedAffirmations.length) {
         setIsPlayingBack(false);
-        frequency.stop();
-        if (songAudioRef.current) {
-          songAudioRef.current.pause();
-          songAudioRef.current = null;
-        }
-        songSourceRef.current = null;
-        songGainNodeRef.current = null;
-        if (audioCtxRef.current) {
-          audioCtxRef.current.close().catch(() => {});
-          audioCtxRef.current = null;
-        }
-        if (visualIntervalRef.current) {
-          clearInterval(visualIntervalRef.current);
-          visualIntervalRef.current = null;
-        }
+        stopAllAudio();
         setMode("complete");
         return;
       }
 
       setCurrentPlaybackIndex(idx);
+
+      if (selectedVisuals.length > 0) {
+        const visIdx = idx % selectedVisuals.length;
+        setCurrentVisualIndex(visIdx);
+      }
+
       const aff = selectedAffirmations[idx];
       const rec = recordings.get(aff.id);
 
       if (rec) {
-        crossfadeToAffirmation(rec.processedUrl);
+        playAffirmation(rec.processedUrl);
       }
 
       const stepInterval = setInterval(() => {
@@ -651,15 +661,18 @@ export default function Player() {
     selectedAffirmations,
     selectedVisuals,
     kit,
-    frequency,
+    playAffirmation,
+    startFrequency,
+    setAudioMuted,
+    setAudioVolume,
+    updateBackgroundMusic,
+    stopAllAudio,
     recordings,
     frequencyMuted,
     frequencyVolume,
     uploadedSong,
     songVolume,
     songMuted,
-    crossfadeToAffirmation,
-    clearFadeIntervals,
   ]);
 
   startPlaybackRef.current = startPlayback;
@@ -670,6 +683,10 @@ export default function Player() {
       assemblyTimersRef.current = [];
       prepTimersRef.current.forEach(clearTimeout);
       prepTimersRef.current = [];
+      if (preflightCtxRef.current) {
+        preflightCtxRef.current.close().catch(() => {});
+        preflightCtxRef.current = null;
+      }
     };
   }, []);
 
@@ -679,33 +696,9 @@ export default function Player() {
     }
     playbackIntervalsRef.current.forEach(clearInterval);
     playbackIntervalsRef.current = [];
-    clearFadeIntervals();
-    audioRef.current?.pause();
-    prevAudioRef.current?.pause();
-    prevAudioRef.current = null;
-    if (songAudioRef.current) {
-      songAudioRef.current.pause();
-      songAudioRef.current = null;
-    }
-    if (songSourceRef.current) {
-      try { songSourceRef.current.disconnect(); } catch {}
-      songSourceRef.current = null;
-    }
-    if (songGainNodeRef.current) {
-      try { songGainNodeRef.current.disconnect(); } catch {}
-      songGainNodeRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
-    if (visualIntervalRef.current) {
-      clearInterval(visualIntervalRef.current);
-      visualIntervalRef.current = null;
-    }
-    frequency.stop();
+    stopAllAudio();
     setIsPlayingBack(false);
-  }, [frequency, clearFadeIntervals]);
+  }, [stopAllAudio]);
 
   const clearPrepTimers = useCallback(() => {
     prepTimersRef.current.forEach(clearTimeout);
@@ -714,11 +707,11 @@ export default function Player() {
 
   const skipPreparation = useCallback(() => {
     clearPrepTimers();
-    if (frequency.isPlaying) {
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
+    if (audioState.isFrequencyPlaying) {
+      setAudioVolume("frequency", frequencyMuted ? 0 : frequencyVolume);
     }
     startPlaybackRef.current();
-  }, [clearPrepTimers, frequency, frequencyMuted, frequencyVolume]);
+  }, [clearPrepTimers, audioState.isFrequencyPlaying, setAudioVolume, frequencyMuted, frequencyVolume]);
 
   const vagusNerveExercises = [
     {
@@ -851,9 +844,9 @@ export default function Player() {
     setPrepStep(2);
     setRelaxationIndex(0);
 
-    if (!frequency.isPlaying && kit) {
-      frequency.start(kit.frequencyHz);
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume * 0.5);
+    if (!audioState.isFrequencyPlaying && kit) {
+      startFrequency(kit.frequencyHz);
+      setAudioVolume("frequency", frequencyMuted ? 0 : frequencyVolume * 0.5);
     }
 
     let idx = 0;
@@ -871,18 +864,18 @@ export default function Player() {
 
     const t = setTimeout(advanceRelaxation, 5000);
     prepTimersRef.current.push(t);
-  }, [frequency, kit, frequencyMuted, frequencyVolume]);
+  }, [audioState.isFrequencyPlaying, startFrequency, setAudioVolume, kit, frequencyMuted, frequencyVolume]);
 
   const startCountdown = useCallback(() => {
     setPrepStep(3);
     setCountdownNumber(10);
     setCountdownText(countdownSteps[0].text);
 
-    if (!frequency.isPlaying && kit) {
-      frequency.start(kit.frequencyHz);
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
+    if (!audioState.isFrequencyPlaying && kit) {
+      startFrequency(kit.frequencyHz);
+      setAudioVolume("frequency", frequencyMuted ? 0 : frequencyVolume);
     } else {
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
+      setAudioVolume("frequency", frequencyMuted ? 0 : frequencyVolume);
     }
 
     let idx = 0;
@@ -903,74 +896,39 @@ export default function Player() {
 
     const t = setTimeout(advanceCountdown, 4000);
     prepTimersRef.current.push(t);
-  }, [frequency, kit, frequencyMuted, frequencyVolume]);
+  }, [audioState.isFrequencyPlaying, startFrequency, setAudioVolume, kit, frequencyMuted, frequencyVolume]);
 
   const toggleFrequencyPreview = useCallback(() => {
     if (!kit) return;
-    if (frequency.isPlaying) {
-      frequency.stop();
+    if (audioState.isFrequencyPlaying) {
+      stopFrequency();
     } else {
-      frequency.start(kit.frequencyHz);
-      frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
+      startFrequency(kit.frequencyHz);
+      setAudioVolume("frequency", frequencyMuted ? 0 : frequencyVolume);
     }
-  }, [kit, frequency, frequencyMuted, frequencyVolume]);
+  }, [kit, audioState.isFrequencyPlaying, startFrequency, stopFrequency, setAudioVolume, frequencyMuted, frequencyVolume]);
 
   useEffect(() => {
-    frequency.setVolume(frequencyMuted ? 0 : frequencyVolume);
-  }, [frequencyVolume, frequencyMuted, frequency]);
+    setAudioMuted("frequency", frequencyMuted);
+    setAudioVolume("frequency", frequencyVolume);
+  }, [frequencyVolume, frequencyMuted, setAudioMuted, setAudioVolume]);
 
   useEffect(() => {
-    if (songGainNodeRef.current && audioCtxRef.current) {
-      const ctx = audioCtxRef.current;
-      songGainNodeRef.current.gain.cancelScheduledValues(ctx.currentTime);
-      songGainNodeRef.current.gain.setValueAtTime(
-        Math.max(0.0001, songGainNodeRef.current.gain.value),
-        ctx.currentTime,
-      );
-      songGainNodeRef.current.gain.exponentialRampToValueAtTime(
-        songMuted ? 0.0001 : Math.max(0.0001, songVolume),
-        ctx.currentTime + 0.1,
-      );
-    } else if (songAudioRef.current) {
-      songAudioRef.current.volume = songMuted ? 0 : songVolume;
-    }
-  }, [songVolume, songMuted]);
+    setAudioMuted("music", songMuted);
+    setAudioVolume("music", songVolume);
+  }, [songVolume, songMuted, setAudioMuted, setAudioVolume]);
 
   useEffect(() => {
     return () => {
       if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
-      if (visualIntervalRef.current) clearInterval(visualIntervalRef.current);
       playbackIntervalsRef.current.forEach(clearInterval);
       playbackIntervalsRef.current = [];
-      fadeIntervalsRef.current.forEach(clearInterval);
-      fadeIntervalsRef.current = [];
 
-      audioRef.current?.pause();
-      audioRef.current = null;
-      prevAudioRef.current?.pause();
-      prevAudioRef.current = null;
-
-      if (songAudioRef.current) {
-        songAudioRef.current.pause();
-        songAudioRef.current = null;
-      }
-      if (songSourceRef.current) {
-        try { songSourceRef.current.disconnect(); } catch {}
-        songSourceRef.current = null;
-      }
-      if (songGainNodeRef.current) {
-        try { songGainNodeRef.current.disconnect(); } catch {}
-        songGainNodeRef.current = null;
-      }
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close().catch(() => {});
-        audioCtxRef.current = null;
-      }
       if (previewAudioRef.current) {
         previewAudioRef.current.pause();
         previewAudioRef.current = null;
       }
-      frequency.stop();
+      stopAllAudio();
     };
   }, []);
 
@@ -1047,7 +1005,7 @@ export default function Player() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </Button>
-            ) : mode === "assembling" ? null : (
+            ) : mode === "assembling" || mode === "preflight" ? null : (
               <Link href={`/kits/${kit.id}`}>
                 <Button
                   variant="ghost"
@@ -1093,13 +1051,13 @@ export default function Player() {
           <div className="flex items-center gap-2">
             {mode === "record" && (
               <Button
-                variant={frequency.isPlaying ? "default" : "outline"}
+                variant={audioState.isFrequencyPlaying ? "default" : "outline"}
                 size="sm"
                 onClick={toggleFrequencyPreview}
                 data-testid="button-toggle-frequency"
               >
                 <Waves className="mr-1.5 h-3.5 w-3.5" />
-                {frequency.isPlaying ? "Theta Active" : "Theta Off"}
+                {audioState.isFrequencyPlaying ? "Theta Active" : "Theta Off"}
               </Button>
             )}
           </div>
@@ -1190,7 +1148,7 @@ export default function Player() {
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Pick at least 3 images for your vision movie background.
+                  Pick at least 3 animated clips for your vision movie. Hover to preview motion.
                 </p>
                 {visuals && visuals.length > 0 ? (
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto pr-1">
@@ -1200,7 +1158,7 @@ export default function Player() {
                         <button
                           key={visual.id}
                           onClick={() => toggleVisual(visual.id)}
-                          className={`relative rounded-md overflow-visible aspect-[4/3] group ${
+                          className={`relative rounded-md overflow-hidden aspect-[4/3] group visual-thumb-preview ${
                             isSelected
                               ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
                               : ""
@@ -1642,13 +1600,13 @@ export default function Player() {
                       data-testid="slider-freq-volume"
                     />
                     <Button
-                      variant={frequency.isPlaying ? "default" : "outline"}
+                      variant={audioState.isFrequencyPlaying ? "default" : "outline"}
                       size="sm"
                       className="h-8"
                       onClick={toggleFrequencyPreview}
                       data-testid="button-freq-toggle"
                     >
-                      {frequency.isPlaying ? (
+                      {audioState.isFrequencyPlaying ? (
                         <>
                           <Pause className="mr-1 h-3 w-3" />
                           Stop
@@ -1784,7 +1742,7 @@ export default function Player() {
             <img
               src={selectedVisuals[0]?.imageUrl}
               alt=""
-              className="absolute inset-0 h-full w-full object-cover blur-sm scale-105"
+              className="absolute inset-0 h-full w-full object-cover blur-sm visual-clip-bg"
             />
           )}
           <div className="absolute inset-0 bg-black/80" />
@@ -1852,13 +1810,181 @@ export default function Player() {
         </div>
       )}
 
+      {mode === "preflight" && (
+        <div className="flex-1 relative overflow-hidden">
+          {selectedVisuals.length > 0 && (
+            <img
+              src={selectedVisuals[0]?.imageUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover blur-md visual-clip-bg"
+            />
+          )}
+          <div className="absolute inset-0 bg-black/85" />
+
+          <div className="absolute top-4 right-4 z-10">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={skipPreflight}
+              className="text-white/50 hover:text-white hover:bg-white/10"
+              data-testid="button-skip-preflight"
+            >
+              <SkipForward className="mr-1.5 h-3.5 w-3.5" />
+              Skip Check
+            </Button>
+          </div>
+
+          <div className="relative flex flex-col items-center justify-center h-full min-h-[70vh] px-4">
+            <div className="text-center space-y-8 max-w-lg w-full">
+              <div className="space-y-3">
+                <div className="flex items-center justify-center gap-2">
+                  <Headphones className="h-8 w-8 text-purple-400" />
+                </div>
+                <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white" data-testid="text-preflight-title">
+                  Headphone Check
+                </h2>
+                <p className="text-sm text-white/60 max-w-md mx-auto">
+                  For the full theta binaural beat effect, you need stereo headphones. 
+                  Let's verify your left and right channels are working correctly.
+                </p>
+              </div>
+
+              <div className="space-y-4 max-w-sm mx-auto">
+                <Card className="bg-white/5 border-white/10 p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                        preflightConfirmedLeft ? "bg-green-500/20" : "bg-purple-500/20"
+                      }`}>
+                        {preflightConfirmedLeft ? (
+                          <Check className="h-4 w-4 text-green-400" />
+                        ) : (
+                          <span className="text-sm font-bold text-purple-400">L</span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-white">Left Channel</p>
+                        <p className="text-xs text-white/40">
+                          {preflightConfirmedLeft ? "Confirmed" : "Test your left ear"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => runPreflightTest("left")}
+                        disabled={preflightStatus !== "idle"}
+                        className="border-white/20 text-white hover:bg-white/10"
+                        data-testid="button-test-left"
+                      >
+                        {preflightStatus === "left" ? (
+                          <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                        ) : (
+                          <Play className="mr-1.5 h-3 w-3" />
+                        )}
+                        Play
+                      </Button>
+                      {preflightPlayedLeft && !preflightConfirmedLeft && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handlePreflightConfirm("left")}
+                          className="text-green-400 hover:text-green-300 hover:bg-green-500/10"
+                          data-testid="button-confirm-left"
+                        >
+                          <Check className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="bg-white/5 border-white/10 p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                        preflightConfirmedRight ? "bg-green-500/20" : "bg-purple-500/20"
+                      }`}>
+                        {preflightConfirmedRight ? (
+                          <Check className="h-4 w-4 text-green-400" />
+                        ) : (
+                          <span className="text-sm font-bold text-purple-400">R</span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-white">Right Channel</p>
+                        <p className="text-xs text-white/40">
+                          {preflightConfirmedRight ? "Confirmed" : "Test your right ear"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => runPreflightTest("right")}
+                        disabled={preflightStatus !== "idle"}
+                        className="border-white/20 text-white hover:bg-white/10"
+                        data-testid="button-test-right"
+                      >
+                        {preflightStatus === "right" ? (
+                          <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                        ) : (
+                          <Play className="mr-1.5 h-3 w-3" />
+                        )}
+                        Play
+                      </Button>
+                      {preflightPlayedRight && !preflightConfirmedRight && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handlePreflightConfirm("right")}
+                          className="text-green-400 hover:text-green-300 hover:bg-green-500/10"
+                          data-testid="button-confirm-right"
+                        >
+                          <Check className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {preflightConfirmedLeft && preflightConfirmedRight && (
+                <div className="space-y-4 animate-in fade-in duration-500">
+                  <div className="flex items-center justify-center gap-2 text-green-400">
+                    <CheckCircle className="h-5 w-5" />
+                    <span className="text-sm font-medium">Headphones verified — stereo audio confirmed</span>
+                  </div>
+                  <Button
+                    onClick={startPreparationFromPreflight}
+                    className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shadow-lg shadow-purple-500/20"
+                    size="lg"
+                    data-testid="button-begin-preparation"
+                  >
+                    <Sparkles className="mr-2 h-5 w-5" />
+                    Begin Preparation
+                  </Button>
+                </div>
+              )}
+
+              <p className="text-xs text-white/30">
+                Binaural beats require stereo headphones to create the frequency 
+                differential between left and right ears needed for theta entrainment.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mode === "preparation" && (
         <div className="flex-1 relative overflow-hidden">
           {selectedVisuals.length > 0 && (
             <img
               src={selectedVisuals[0]?.imageUrl}
               alt=""
-              className="absolute inset-0 h-full w-full object-cover blur-md scale-105"
+              className="absolute inset-0 h-full w-full object-cover blur-md visual-clip-bg"
             />
           )}
           <div className="absolute inset-0 bg-black/85" />
@@ -2107,7 +2233,7 @@ export default function Player() {
             <img
               src={selectedVisuals[0]?.imageUrl}
               alt=""
-              className="absolute inset-0 h-full w-full object-cover blur-sm"
+              className="absolute inset-0 h-full w-full object-cover blur-sm visual-clip-bg"
             />
           )}
           <div className="absolute inset-0 bg-black/75" />
@@ -2188,7 +2314,45 @@ export default function Player() {
                 </div>
               </Card>
 
-              {!hasUnlockedReplay ? (
+              {subscriptionActive || hasUnlockedReplay ? null : subscriptionExpired ? (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/5 backdrop-blur-xl p-6 space-y-4" data-testid="card-subscription-expired">
+                  <div className="flex items-center justify-center gap-2">
+                    <Lock className="h-5 w-5 text-red-400" />
+                    <h3 className="font-serif font-bold text-lg text-white">
+                      Subscription Expired
+                    </h3>
+                  </div>
+                  <p className="text-sm text-white/60 leading-relaxed text-center">
+                    Your annual subscription has expired. Renew your plan to continue 
+                    replaying all your vision movies, or purchase this kit individually.
+                  </p>
+                  <Link href="/kits">
+                    <Button
+                      className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold"
+                      size="lg"
+                      data-testid="button-renew-subscription"
+                    >
+                      <Star className="mr-2 h-4 w-4 fill-black" />
+                      Renew — View Plans
+                    </Button>
+                  </Link>
+                  <Button
+                    onClick={handleUnlockReplay}
+                    disabled={isCheckingOut}
+                    variant="outline"
+                    className="w-full border-white/20 text-white hover:bg-white/10"
+                    size="lg"
+                    data-testid="button-purchase-kit-expired"
+                  >
+                    {isCheckingOut ? (
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    ) : (
+                      <CreditCard className="mr-2 h-5 w-5" />
+                    )}
+                    Buy This Kit — ${((kit.price || 6000) / 100).toFixed(0)}
+                  </Button>
+                </div>
+              ) : (
                 <div className="premium-border rounded-xl">
                   <Card className="bg-black/70 backdrop-blur-xl border-0 rounded-xl p-6 space-y-5">
                     <div className="flex items-center justify-center gap-2">
@@ -2218,7 +2382,7 @@ export default function Player() {
                       ) : (
                         <CreditCard className="mr-2 h-5 w-5" />
                       )}
-                      Save & Unlock — ${((kit.price || 2997) / 100).toFixed(2)}
+                      Save & Unlock — ${((kit.price || 6000) / 100).toFixed(0)}
                     </Button>
                     <button
                       onClick={() => setHasUnlockedReplay(true)}
@@ -2229,7 +2393,9 @@ export default function Player() {
                     </button>
                   </Card>
                 </div>
-              ) : (
+              )}
+
+              {(subscriptionActive || hasUnlockedReplay) && (
                 <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
                   <Button
                     onClick={startAssembly}
@@ -2267,26 +2433,25 @@ export default function Player() {
         <div className="flex-1 relative overflow-hidden">
           {selectedVisuals.length > 0 ? (
             <>
-              <img
-                src={selectedVisuals[previousVisualIndex]?.imageUrl}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
-                style={{ opacity: 0, transition: "opacity 2s ease-in-out" }}
-                key={`prev-${previousVisualIndex}`}
-              />
-              <img
-                src={selectedVisuals[currentVisualIndex]?.imageUrl}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
-                style={{ opacity: 1, transition: "opacity 2s ease-in-out" }}
-                key={`curr-${currentVisualIndex}`}
-              />
+              {selectedVisuals.map((vis, idx) => (
+                <img
+                  key={vis.id}
+                  src={vis.imageUrl}
+                  alt=""
+                  className={`absolute inset-0 h-full w-full object-cover visual-clip-${(idx % 6) + 1}`}
+                  style={{
+                    opacity: idx === currentVisualIndex ? 1 : 0,
+                    transition: "opacity 2.5s ease-in-out",
+                    zIndex: idx === currentVisualIndex ? 2 : 1,
+                  }}
+                />
+              ))}
             </>
           ) : (
             <img
               src={kit.thumbnailUrl}
               alt=""
-              className="absolute inset-0 h-full w-full object-cover"
+              className="absolute inset-0 h-full w-full object-cover visual-clip-bg"
             />
           )}
           <div className="absolute inset-0 bg-black/60" />
