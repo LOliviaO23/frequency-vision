@@ -111,6 +111,21 @@ export const categoryLabels: Record<Category, string> = {
   manifestation: "Manifestation & Dreams",
 };
 
+export const fvSubscriptions = pgTable("fv_subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: text("session_id").notNull().unique(),
+  email: text("email").notNull(),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  planType: text("plan_type").notNull(),
+  status: text("status").notNull().default("active"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSubscriptionSchema = createInsertSchema(fvSubscriptions).omit({ id: true, createdAt: true });
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type Subscription = typeof fvSubscriptions.$inferSelect;
+
 export { conversations, messages } from "./models/chat";
 export type { Conversation, InsertConversation, Message, InsertMessage } from "./models/chat";
 
