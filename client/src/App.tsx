@@ -17,6 +17,7 @@ import HowItWorks from "@/pages/how-it-works";
 import CheckoutSuccess from "@/pages/checkout-success";
 import VisionBoard from "@/pages/vision-board";
 import VRPlayer from "@/pages/vr-player";
+import AdminOutreach from "@/pages/admin-outreach";
 
 function Router() {
   return (
@@ -29,6 +30,7 @@ function Router() {
       <Route path="/vr/:id" component={VRPlayer} />
       <Route path="/how-it-works" component={HowItWorks} />
       <Route path="/checkout/success" component={CheckoutSuccess} />
+      <Route path="/admin/outreach" component={AdminOutreach} />
       <Route component={NotFound} />
     </Switch>
   );
