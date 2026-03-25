@@ -129,6 +129,29 @@ export type Subscription = typeof fvSubscriptions.$inferSelect;
 export { conversations, messages } from "./models/chat";
 export type { Conversation, InsertConversation, Message, InsertMessage } from "./models/chat";
 
+export const influencerContacts = pgTable("influencer_contacts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  platform: text("platform").notNull(),
+  niche: text("niche").notNull(),
+  socialHandle: text("social_handle"),
+  status: text("status").notNull().default("not_contacted"),
+  notes: text("notes"),
+  lastContactedAt: timestamp("last_contacted_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertInfluencerContactSchema = createInsertSchema(influencerContacts).omit({ id: true, createdAt: true });
+export type InsertInfluencerContact = z.infer<typeof insertInfluencerContactSchema>;
+export type InfluencerContact = typeof influencerContacts.$inferSelect;
+
+export const INFLUENCER_NICHES = ["Life Coach", "Spiritual Influencer", "Healing Platform", "Wellness Brand"] as const;
+export type InfluencerNiche = typeof INFLUENCER_NICHES[number];
+
+export const INFLUENCER_STATUSES = ["not_contacted", "emailed", "responded", "partnership_active", "declined"] as const;
+export type InfluencerStatus = typeof INFLUENCER_STATUSES[number];
+
 export const categoryColors: Record<Category, string> = {
   abundance: "from-amber-500 to-yellow-600",
   health: "from-emerald-500 to-teal-600",
