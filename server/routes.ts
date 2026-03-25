@@ -2,6 +2,105 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
+import { insertInfluencerContactSchema, INFLUENCER_NICHES, INFLUENCER_STATUSES } from "@shared/schema";
+import nodemailer from "nodemailer";
+import { z } from "zod";
+
+const influencerStatusSchema = z.enum(INFLUENCER_STATUSES);
+const influencerNicheSchema = z.enum(INFLUENCER_NICHES);
+
+const OUTREACH_TEMPLATES: Record<string, { subject: string; body: (name: string) => string }> = {
+  "Life Coach": {
+    subject: "Collaboration Offer: Free Mind Movie Kit for Your Community",
+    body: (name: string) => `Hi ${name},
+
+I hope this message finds you well. I'm reaching out from FrequencyVision — a platform that creates personalized digital mind movie kits using theta binaural beats, Solfeggio frequencies, and vision imagery to help people reprogram their subconscious mind and accelerate their results.
+
+I've been following your work and I'm genuinely impressed by the transformation you create with your clients. Your approach to mindset and high performance aligns deeply with what we do — and I believe your community would absolutely love what FrequencyVision offers.
+
+Here's what I'd love to propose:
+
+We'd like to gift you a complimentary FrequencyVision kit — completely customized to your chosen focus area (abundance, confidence, success, or any of our other transformational categories). You pick your own affirmations, record them in your own voice, choose your personal visuals, and watch your personalized mind movie every day.
+
+Many coaches who've used our kits tell us it becomes a core part of their own daily practice — and a natural tool they start recommending to clients.
+
+If you love the experience and feel it would serve your audience, we'd be honored to set up an affiliate or partnership arrangement that works for you — generous commission, custom discount codes for your community, and co-branded content if you'd like.
+
+No pressure, no strings. I just genuinely believe this will add real value to your daily practice and to the people you serve.
+
+Would you be open to a brief call or email exchange to explore this?
+
+Warmly,
+The FrequencyVision Team
+frequencyvision.com`,
+  },
+  "Healing Platform": {
+    subject: "Partnership Opportunity: Frequency-Powered Mind Movie Kits",
+    body: (name: string) => `Hi ${name},
+
+I'm reaching out from FrequencyVision with an exciting partnership opportunity I think your audience will genuinely resonate with.
+
+FrequencyVision creates digital mind movie kits that combine theta binaural beats, Solfeggio healing frequencies, personalized affirmations recorded in the user's own voice, and vision imagery — all designed to create deep subconscious shifts and accelerate healing, manifestation, and personal transformation.
+
+Given your platform's focus on healing and consciousness expansion, we believe FrequencyVision aligns naturally with the work you're already doing for your community.
+
+We'd love to send you a complimentary kit to experience firsthand. You'd:
+• Choose a transformation theme (health, peace, abundance, love, and more)
+• Select your personal affirmations and record them in your own voice
+• Choose your vision images and build your personalized mind movie
+• Experience the daily practice of watching it with healing frequencies
+
+If it resonates — and we're confident it will — we'd be thrilled to explore a co-promotion or affiliate arrangement that introduces FrequencyVision to your community.
+
+Our program offers competitive commissions, pre-made promotional content, and full creative flexibility in how you present it to your audience.
+
+Would you be open to experiencing it yourself first and having a conversation from there?
+
+With gratitude,
+The FrequencyVision Team
+frequencyvision.com`,
+  },
+  "Wellness Brand": {
+    subject: "Collab Inquiry: Mind Movie Kits + Your Wellness Community",
+    body: (name: string) => `Hi ${name},
+
+Huge admirer of what you've built — your community clearly resonates with people who are serious about living well, thinking clearly, and intentionally creating the life they want.
+
+I'm reaching out from FrequencyVision. We make personalized digital mind movie kits — think vision board meets neuroscience. Each kit uses theta binaural beats to access the subconscious, Solfeggio frequencies for deep healing resonance, and the user's own recorded voice speaking their affirmations — making it far more powerful than anything passive.
+
+It's the kind of daily practice that your wellness-focused audience would immediately understand and love.
+
+We'd like to gift you a full kit to experience personally — zero obligation, no catch. Just try it, see what you think.
+
+If it becomes part of your own wellness stack (and we suspect it might), we'd love to explore what a partnership could look like — whether that's affiliate content, a sponsored feature, or a branded collaboration. We keep things flexible and creator-first.
+
+Could we set something up to get a kit in your hands and go from there?
+
+Looking forward to connecting,
+The FrequencyVision Team
+frequencyvision.com`,
+  },
+  "Spiritual Influencer": {
+    subject: "Gift for You: Personalized Frequency Vision Kit",
+    body: (name: string) => `Hi ${name},
+
+Your work speaks to something real — the kind of inner transformation that most people only talk about but rarely actually achieve. That's why I knew I had to reach out.
+
+I'm on the team at FrequencyVision, and we've built something I think you'll genuinely connect with: personalized mind movie kits that use theta binaural beats (to put the brain in its most receptive state), Solfeggio healing frequencies, and the user's own recorded affirmations — layered over their hand-chosen vision imagery.
+
+The result is a deeply personal, frequency-powered vision movie that people watch daily to reprogram their subconscious beliefs and call in what they're meant to experience.
+
+I'd love to gift you a complimentary kit — no strings, no obligation. Just an invitation to experience it yourself. Your niche is exactly the kind of aligned, conscious community that FrequencyVision was built for.
+
+If it moves you the way we believe it will, we'd be honored to explore a collaboration — something that feels authentic to your voice and genuinely serves your followers.
+
+Would you be open to receiving a kit and sharing your experience?
+
+In frequency and light,
+The FrequencyVision Team
+frequencyvision.com`,
+  },
+};
 
 export async function registerRoutes(
   httpServer: Server,
@@ -412,6 +511,153 @@ export async function registerRoutes(
       res.json({ url: session.url });
     } catch (err: any) {
       console.error("Lifetime checkout error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  await storage.seedInfluencerContacts();
+
+  app.get("/api/outreach/contacts", async (req, res) => {
+    try {
+      const { search, niche, status } = req.query as Record<string, string>;
+      const contacts = await storage.getAllInfluencerContacts(search, niche, status);
+      res.json(contacts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/outreach/contacts", async (req, res) => {
+    try {
+      const parsed = insertInfluencerContactSchema.extend({
+        niche: influencerNicheSchema,
+        status: influencerStatusSchema.optional().default("not_contacted"),
+      }).safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.flatten() });
+      }
+      const contact = await storage.createInfluencerContact(parsed.data);
+      res.json(contact);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/outreach/contacts/:id", async (req, res) => {
+    try {
+      const updateSchema = insertInfluencerContactSchema.partial().extend({
+        niche: influencerNicheSchema.optional(),
+        status: influencerStatusSchema.optional(),
+      });
+      const parsed = updateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.flatten() });
+      }
+      const contact = await storage.updateInfluencerContact(req.params.id, parsed.data);
+      if (!contact) return res.status(404).json({ message: "Contact not found" });
+      res.json(contact);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/outreach/contacts/:id/status", async (req, res) => {
+    try {
+      const parsed = z.object({ status: influencerStatusSchema }).safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid status", errors: parsed.error.flatten() });
+      }
+      const contact = await storage.updateInfluencerStatus(req.params.id, parsed.data.status);
+      if (!contact) return res.status(404).json({ message: "Contact not found" });
+      res.json(contact);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/outreach/contacts/:id", async (req, res) => {
+    try {
+      await storage.deleteInfluencerContact(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/outreach/template/:contactId", async (req, res) => {
+    try {
+      const contact = await storage.getInfluencerContact(req.params.contactId);
+      if (!contact) return res.status(404).json({ message: "Contact not found" });
+      const niche = contact.niche;
+      const template = OUTREACH_TEMPLATES[niche] || OUTREACH_TEMPLATES["Wellness Brand"];
+      res.json({
+        subject: template.subject,
+        body: template.body(contact.name),
+        to: contact.email,
+        contactName: contact.name,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/outreach/send-email", async (req, res) => {
+    try {
+      const { contactId } = req.body;
+      if (!contactId) return res.status(400).json({ message: "contactId is required" });
+
+      const contact = await storage.getInfluencerContact(contactId);
+      if (!contact) return res.status(404).json({ message: "Contact not found" });
+
+      const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env;
+      if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+        return res.status(503).json({
+          message: "Email sending is not configured. Please set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM environment variables.",
+        });
+      }
+
+      const niche = contact.niche;
+      const template = OUTREACH_TEMPLATES[niche] || OUTREACH_TEMPLATES["Wellness Brand"];
+      const emailBody = template.body(contact.name);
+      const emailSubject = template.subject;
+
+      const transporter = nodemailer.createTransport({
+        host: SMTP_HOST,
+        port: parseInt(SMTP_PORT || "587"),
+        secure: parseInt(SMTP_PORT || "587") === 465,
+        auth: { user: SMTP_USER, pass: SMTP_PASS },
+      });
+
+      await transporter.sendMail({
+        from: SMTP_FROM || SMTP_USER,
+        to: contact.email,
+        subject: emailSubject,
+        text: emailBody,
+      });
+
+      await storage.updateInfluencerContact(contactId, {
+        status: "emailed",
+        lastContactedAt: new Date(),
+      });
+
+      res.json({ success: true, message: `Email sent to ${contact.name} at ${contact.email}` });
+    } catch (err: any) {
+      console.error("Send email error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/outreach/stats", async (_req, res) => {
+    try {
+      const contacts = await storage.getAllInfluencerContacts();
+      const stats = {
+        total: contacts.length,
+        emailed: contacts.filter(c => c.status === "emailed" || c.status === "responded" || c.status === "partnership_active").length,
+        responded: contacts.filter(c => c.status === "responded").length,
+        active: contacts.filter(c => c.status === "partnership_active").length,
+      };
+      res.json(stats);
+    } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
