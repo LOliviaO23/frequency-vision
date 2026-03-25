@@ -65,6 +65,7 @@ type PreflightStatus = "idle" | "left" | "right" | "passed" | "failed";
 
 interface ProcessedRecording extends RecordingData {
   processedUrl: string;
+  processedBuffer?: AudioBuffer;
   processedBlob: Blob;
 }
 
@@ -164,6 +165,7 @@ export default function Player() {
   const {
     state: audioState,
     playAffirmation,
+    playAffirmationWithRepeats,
     updateBackgroundMusic,
     startFrequency,
     stopFrequency,
@@ -171,6 +173,8 @@ export default function Player() {
     setMuted: setAudioMuted,
     stopAll: stopAllAudio,
   } = useAudio();
+
+  const [repeatCount, setRepeatCount] = useState(0);
   const recorder = useVoiceRecorder();
   const voiceProcessor = useVoiceProcessor();
   const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -308,6 +312,7 @@ export default function Player() {
               ...rawData!,
               processedUrl: processed.url,
               processedBlob: processed.blob,
+              processedBuffer: processed.buffer,
             });
             return next;
           });
@@ -639,7 +644,10 @@ export default function Player() {
       const rec = recordings.get(aff.id);
 
       if (rec) {
-        playAffirmation(rec.processedUrl);
+        setRepeatCount(1);
+        playAffirmationWithRepeats(rec.processedBuffer ?? rec.processedUrl, 3, setRepeatCount);
+      } else {
+        setRepeatCount(0);
       }
 
       const stepInterval = setInterval(() => {
@@ -651,6 +659,7 @@ export default function Player() {
 
       playbackTimerRef.current = setTimeout(() => {
         clearInterval(stepInterval);
+        setRepeatCount(0);
         playbackIndexRef.current = idx + 1;
         playNext();
       }, perAffirmation * 1000);
@@ -662,6 +671,7 @@ export default function Player() {
     selectedVisuals,
     kit,
     playAffirmation,
+    playAffirmationWithRepeats,
     startFrequency,
     setAudioMuted,
     setAudioVolume,
@@ -2459,11 +2469,34 @@ export default function Player() {
           <div className="relative flex flex-col items-center justify-center h-full min-h-[60vh] px-4">
             <div className="text-center space-y-6 max-w-2xl">
               <p
-                className="text-3xl sm:text-4xl lg:text-5xl font-serif font-bold text-white leading-tight drop-shadow-lg"
+                className="text-4xl font-serif text-white text-center animate-in fade-in zoom-in duration-700"
                 data-testid="text-playback-affirmation"
               >
                 {currentAffirmation?.text}
               </p>
+
+              {/* Repeat indicator — only shown when voice is actively repeating */}
+              {repeatCount > 0 && (
+                <div className="flex flex-col items-center gap-2" data-testid="div-repeat-indicator">
+                  <div className="flex gap-2">
+                    {[1, 2, 3].map((n) => (
+                      <div
+                        key={n}
+                        className={`h-1.5 w-8 rounded-full transition-all duration-500 ${
+                          n <= repeatCount
+                            ? "bg-purple-400 shadow-[0_0_10px_rgba(168,85,247,0.5)]"
+                            : "bg-white/20"
+                        }`}
+                        data-testid={`bar-repeat-${n}`}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-xs text-purple-300 font-mono tracking-widest uppercase" data-testid="text-repeat-count">
+                    Internalizing Pass {repeatCount}
+                  </span>
+                </div>
+              )}
+
               <div className="flex items-center gap-1 justify-center">
                 <span className="font-mono text-sm text-white/70">
                   {currentPlaybackIndex + 1} / {totalAffirmations}
