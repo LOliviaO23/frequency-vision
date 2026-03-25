@@ -1,31 +1,29 @@
 import { useCallback, useRef } from "react";
 
-const PITCH_SHIFT_FACTOR = 0.88;
+const PITCH_SHIFT_FACTOR = 0.95;
 
-const WARMTH_FREQ = 150;
-const WARMTH_GAIN_DB = 4;
+const WARMTH_FREQ = 180;
+const WARMTH_GAIN_DB = 2.5;
 
-const CLARITY_FREQ = 3000;
-const CLARITY_GAIN_DB = -2;
-const CLARITY_Q = 1.4;
+const CLARITY_FREQ = 3500;
+const CLARITY_GAIN_DB = -1.5;
+const CLARITY_Q = 1.2;
 
-const HALL_REVERB_DECAY = 2.5;
-const HALL_REVERB_MIX = 0.10;
-const HALL_PRE_DELAY_MS = 20;
+const HALL_REVERB_DECAY = 1.2;
+const HALL_REVERB_MIX = 0.04;
+const HALL_PRE_DELAY_MS = 12;
 const HALL_EARLY_REFLECTIONS = [
-  { delay: 0.012, gain: 0.7 },
-  { delay: 0.019, gain: 0.6 },
-  { delay: 0.028, gain: 0.5 },
-  { delay: 0.037, gain: 0.45 },
-  { delay: 0.048, gain: 0.35 },
-  { delay: 0.063, gain: 0.3 },
+  { delay: 0.010, gain: 0.5 },
+  { delay: 0.016, gain: 0.4 },
+  { delay: 0.024, gain: 0.3 },
+  { delay: 0.032, gain: 0.25 },
 ];
 
-const COMP_THRESHOLD = -24;
-const COMP_RATIO = 4;
-const COMP_KNEE = 12;
-const COMP_ATTACK = 0.003;
-const COMP_RELEASE = 0.15;
+const COMP_THRESHOLD = -18;
+const COMP_RATIO = 3;
+const COMP_KNEE = 8;
+const COMP_ATTACK = 0.005;
+const COMP_RELEASE = 0.2;
 
 function createLargeHallImpulse(ctx: OfflineAudioContext, duration: number, decay: number): AudioBuffer {
   const sampleRate = ctx.sampleRate;
@@ -73,7 +71,7 @@ function createLargeHallImpulse(ctx: OfflineAudioContext, duration: number, deca
 export function useVoiceProcessor() {
   const processingRef = useRef(false);
 
-  const processVoice = useCallback(async (blob: Blob): Promise<{ blob: Blob; url: string }> => {
+  const processVoice = useCallback(async (blob: Blob): Promise<{ blob: Blob; url: string; buffer: AudioBuffer }> => {
     if (processingRef.current) {
       throw new Error("Already processing");
     }
@@ -165,7 +163,7 @@ export function useVoiceProcessor() {
       const wavBlob = audioBufferToWav(renderedBuffer);
       const url = URL.createObjectURL(wavBlob);
 
-      return { blob: wavBlob, url };
+      return { blob: wavBlob, url, buffer: renderedBuffer };
     } finally {
       processingRef.current = false;
     }
