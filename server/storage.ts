@@ -1,6 +1,6 @@
-import { type Kit, type InsertKit, type Affirmation, type InsertAffirmation, type Order, type InsertOrder, type KitVisual, type InsertKitVisual, type VisionBoardImage, type InsertVisionBoardImage, type Subscription, type InsertSubscription, kits, affirmations, orders, kitVisuals, visionBoardImages, fvSubscriptions } from "@shared/schema";
+import { type Kit, type InsertKit, type Affirmation, type InsertAffirmation, type Order, type InsertOrder, type KitVisual, type InsertKitVisual, type VisionBoardImage, type InsertVisionBoardImage, type Subscription, type InsertSubscription, type InfluencerContact, type InsertInfluencerContact, kits, affirmations, orders, kitVisuals, visionBoardImages, fvSubscriptions, influencerContacts } from "@shared/schema";
 import { db } from "./db";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, ilike, or, and } from "drizzle-orm";
 
 export interface IStorage {
   getKit(id: string): Promise<Kit | undefined>;
@@ -35,6 +35,15 @@ export interface IStorage {
   getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
   createSubscription(sub: InsertSubscription): Promise<Subscription>;
   updateSubscription(id: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined>;
+
+  getAllInfluencerContacts(search?: string, niche?: string, status?: string): Promise<InfluencerContact[]>;
+  getInfluencerContact(id: string): Promise<InfluencerContact | undefined>;
+  createInfluencerContact(contact: InsertInfluencerContact): Promise<InfluencerContact>;
+  updateInfluencerContact(id: string, data: Partial<InsertInfluencerContact>): Promise<InfluencerContact | undefined>;
+  updateInfluencerStatus(id: string, status: string): Promise<InfluencerContact | undefined>;
+  deleteInfluencerContact(id: string): Promise<void>;
+  getInfluencerContactCount(): Promise<number>;
+  seedInfluencerContacts(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -159,6 +168,85 @@ export class DatabaseStorage implements IStorage {
   async updateSubscription(id: string, data: Partial<InsertSubscription>): Promise<Subscription | undefined> {
     const [updated] = await db.update(fvSubscriptions).set(data).where(eq(fvSubscriptions.id, id)).returning();
     return updated;
+  }
+
+  async getAllInfluencerContacts(search?: string, niche?: string, status?: string): Promise<InfluencerContact[]> {
+    const conditions: ReturnType<typeof eq>[] = [];
+    if (search) {
+      const searchCondition = or(
+        ilike(influencerContacts.name, `%${search}%`),
+        ilike(influencerContacts.email, `%${search}%`),
+        ilike(influencerContacts.platform, `%${search}%`),
+        ilike(influencerContacts.socialHandle, `%${search}%`),
+      );
+      if (searchCondition) conditions.push(searchCondition);
+    }
+    if (niche) conditions.push(eq(influencerContacts.niche, niche));
+    if (status) conditions.push(eq(influencerContacts.status, status));
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return db.select().from(influencerContacts).where(whereClause).orderBy(influencerContacts.createdAt);
+  }
+
+  async getInfluencerContact(id: string): Promise<InfluencerContact | undefined> {
+    const [contact] = await db.select().from(influencerContacts).where(eq(influencerContacts.id, id));
+    return contact;
+  }
+
+  async createInfluencerContact(contact: InsertInfluencerContact): Promise<InfluencerContact> {
+    const [created] = await db.insert(influencerContacts).values(contact).returning();
+    return created;
+  }
+
+  async updateInfluencerContact(id: string, data: Partial<InsertInfluencerContact>): Promise<InfluencerContact | undefined> {
+    const [updated] = await db.update(influencerContacts).set(data).where(eq(influencerContacts.id, id)).returning();
+    return updated;
+  }
+
+  async updateInfluencerStatus(id: string, status: string): Promise<InfluencerContact | undefined> {
+    const [updated] = await db.update(influencerContacts).set({ status }).where(eq(influencerContacts.id, id)).returning();
+    return updated;
+  }
+
+  async deleteInfluencerContact(id: string): Promise<void> {
+    await db.delete(influencerContacts).where(eq(influencerContacts.id, id));
+  }
+
+  async getInfluencerContactCount(): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` }).from(influencerContacts);
+    return Number(result[0]?.count || 0);
+  }
+
+  async seedInfluencerContacts(): Promise<void> {
+    const count = await this.getInfluencerContactCount();
+    if (count > 0) return;
+
+    const contacts: InsertInfluencerContact[] = [
+      { name: "MindValley", email: "partnerships@mindvalley.com", platform: "mindvalley.com", niche: "Healing Platform", socialHandle: "@mindvalley", status: "not_contacted", notes: "Premier personal growth platform with millions of students globally." },
+      { name: "Tony Robbins Team", email: "partnerships@tonyrobbins.com", platform: "tonyrobbins.com", niche: "Life Coach", socialHandle: "@tonyrobbins", status: "not_contacted", notes: "World's #1 life coach. Huge audience overlap with visualization and mindset." },
+      { name: "Brendon Burchard", email: "contact@brendon.com", platform: "brendon.com", niche: "Life Coach", socialHandle: "@brendonburchard", status: "not_contacted", notes: "High Performance Academy founder. Massive email list. Strong alignment with FV." },
+      { name: "Joe Dispenza Community", email: "info@drjoedispenza.com", platform: "drjoedispenza.com", niche: "Healing Platform", socialHandle: "@drjoedispenza", status: "not_contacted", notes: "Neuroscience-based meditation. Audience deeply aligned with brainwave tech." },
+      { name: "Gaia TV", email: "partnerships@gaia.com", platform: "gaia.com", niche: "Healing Platform", socialHandle: "@gaia", status: "not_contacted", notes: "Consciousness-focused streaming platform. Perfect audience fit for FV." },
+      { name: "Lisa Nichols", email: "team@motivatingthemasses.com", platform: "motivatingthemasses.com", niche: "Life Coach", socialHandle: "@lisa_nichols", status: "not_contacted", notes: "Featured in The Secret. Powerful speaker and manifestation advocate." },
+      { name: "Hay House", email: "info@hayhouse.com", platform: "hayhouse.com", niche: "Healing Platform", socialHandle: "@hayhouseinc", status: "not_contacted", notes: "Publisher for Louise Hay, Wayne Dyer. Deep wellness/healing audience." },
+      { name: "Abraham-Hicks Publications", email: "info@abraham-hicks.com", platform: "abraham-hicks.com", niche: "Spiritual Influencer", socialHandle: "@abrahamhicks", status: "not_contacted", notes: "Law of Attraction originators. Massive audience for manifestation content." },
+      { name: "Deepak Chopra Wellness", email: "media@deepakchopra.com", platform: "deepakchopra.com", niche: "Wellness Brand", socialHandle: "@deepakchopra", status: "not_contacted", notes: "Mind-body medicine authority. Global brand in conscious living." },
+      { name: "The Chopra Center", email: "info@chopra.com", platform: "chopra.com", niche: "Healing Platform", socialHandle: "@chopracenter", status: "not_contacted", notes: "Holistic health platform. Strong wellness and meditation community." },
+      { name: "Kyle Cease", email: "kyle@kylecease.com", platform: "kylecease.com", niche: "Life Coach", socialHandle: "@kylecease", status: "not_contacted", notes: "Transformational comedian turned coach. Wildly authentic and viral content." },
+      { name: "Gabby Bernstein", email: "team@gabbybernstein.com", platform: "gabbybernstein.com", niche: "Spiritual Influencer", socialHandle: "@gabbybernstein", status: "not_contacted", notes: "NYT bestselling author. Spirit Junkie brand. Massive conscious female audience." },
+      { name: "Michael Beckwith - Agape", email: "info@agapelive.com", platform: "agapelive.com", niche: "Spiritual Influencer", socialHandle: "@michaelbeckwith", status: "not_contacted", notes: "Featured in The Secret. Founder of Agape International. Powerful following." },
+      { name: "HeartMath Institute", email: "inquiry@heartmath.org", platform: "heartmath.org", niche: "Healing Platform", socialHandle: "@heartmathinstitute", status: "not_contacted", notes: "Science of heart coherence. Deeply aligned with FV's frequency science angle." },
+      { name: "Lewis Howes - School of Greatness", email: "partnerships@lewishowes.com", platform: "lewishowes.com", niche: "Wellness Brand", socialHandle: "@lewishowes", status: "not_contacted", notes: "Top podcast host. Massive reach with growth-oriented audience." },
+      { name: "Marie Forleo", email: "hello@marieforleo.com", platform: "marieforleo.com", niche: "Life Coach", socialHandle: "@marieforleo", status: "not_contacted", notes: "B-School creator. Empowered women entrepreneurs. Strong personal development angle." },
+      { name: "Vishen Lakhiani (personal)", email: "vishen@mindvalley.com", platform: "mindvalley.com", niche: "Life Coach", socialHandle: "@vishen", status: "not_contacted", notes: "Mindvalley founder. Direct partnership could unlock full platform access." },
+      { name: "Eckhart Tolle Community", email: "media@eckharttolle.com", platform: "eckharttolle.com", niche: "Spiritual Influencer", socialHandle: "@eckharttolle", status: "not_contacted", notes: "Power of Now author. Enormous global following in conscious awareness." },
+      { name: "Zen Life & Meditation", email: "hello@zenlife.co", platform: "zenlife.co", niche: "Wellness Brand", socialHandle: "@zenlife", status: "not_contacted", notes: "Mindfulness lifestyle brand. Audience interested in relaxation and mental clarity." },
+      { name: "The Daily Stoic", email: "ryan@ryanholiday.net", platform: "dailystoic.com", niche: "Wellness Brand", socialHandle: "@dailystoic", status: "not_contacted", notes: "Ryan Holiday's Stoic philosophy brand. Self-improvement crossover audience." },
+    ];
+
+    for (const contact of contacts) {
+      await db.insert(influencerContacts).values(contact);
+    }
   }
 }
 
